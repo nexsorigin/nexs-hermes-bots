@@ -2,8 +2,6 @@
 __pycache__/
 *.py[cod]
 .venv/
-/profiles/*/soul.md
-/shared/TEAM.md
 /artifacts/*
 !/artifacts/README.md
 /logs/

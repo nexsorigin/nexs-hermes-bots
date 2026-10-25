@@ -1,0 +1,709 @@
+#!/bin/sh
+# Manage the Hermes Gateway and File Watcher on macOS.
+# Usage: sh bots {init|start|stop|cancel|clean|status|logs|console|uninstall|help}
+set -eu
+
+LABEL='local.hermes.file-watcher'
+DOMAIN="gui/$(id -u)"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WATCHER_DIR="$SCRIPT_DIR"
+BIN_DIR="$WATCHER_DIR/bin"
+CLI_SCRIPT="$SCRIPT_DIR/$(basename "$0")"
+HERMES_WATCHER_DIR="$WATCHER_DIR"
+export HERMES_WATCHER_DIR
+PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH
+
+hermes_bin() {
+    if command -v hermes >/dev/null 2>&1; then
+        command -v hermes
+    elif [ -x "$HOME/.hermes/hermes-agent/.hermes/bin/hermes" ]; then
+        printf '%s\n' "$HOME/.hermes/hermes-agent/.hermes/bin/hermes"
+    else
+        echo 'ERROR: Hermes CLI not found.' >&2
+        exit 1
+    fi
+}
+
+show_help() {
+    cat <<'HELP'
+Hermes Bot Manager
+Workflow: Support -> Developer -> QA <-> Developer -> Support.
+The default setup uses three dedicated Hermes profiles.
+
+Usage: sh bots <command>  (run from the repository clone directory)
+
+Commands:
+  init       Install Hermes CLI if missing, then create/verify the profiles selected
+             in config.json, their fixture folders, handoff-only SOUL.md files,
+             TEAM.md, and the watcher Python environment. Unconfigured Hermes
+             profiles remain untouched.
+             Initialization only: does NOT start the Gateway, watcher,
+             LaunchAgent, or any Hermes bot.
+  sync       Sync configured profiles with profiles/<profile>/soul.md (local wins);
+             back up changed Hermes SOUL.md.
+  start      Start Hermes Gateway and the Hermes watcher LaunchAgent.
+             Starts the watcher only once and waits for gateway readiness.
+  stop       Stop the Hermes watcher and Hermes Gateway.
+             Keeps installed services and data for later use.
+  cancel     Cancel active Hermes CLI tasks; remove identifiable Markdown outputs
+             created during those tasks. Preserves incoming requests and old work.
+             Does NOT stop the watcher or Hermes Gateway.
+  clean      Delete .md files directly inside configured profile fixture folders,
+             reset submission_history.jsonl, and remove the entire logs directory.
+             Requires services to be stopped and a yes/no confirmation (default: no).
+  status     Show Hermes Gateway, watcher service, and process status.
+  logs       Follow watcher and configured profile logs (Ctrl+C to exit).
+  console    Open a guarded console for profiles under team.profiles (no log pane).
+             Blocks new messages while a Hermes bot CLI task is running.
+  uninstall  Permanently uninstall Hermes, all Hermes user data, and related
+             LaunchAgents after a yes/no confirmation (default: no).
+             Preserves this Git checkout.
+  help       Show this help message.
+
+Connect an LLM (required before running agent tasks):
+  1. sh bots init          Install Hermes CLI if needed and prepare profiles.
+  2. hermes model          Select a provider/model and complete its setup.
+                            For ChatGPT, choose the Codex subscription login;
+                            API-key and local/custom providers are also supported.
+  3. hermes auth list      Inspect configured authentication (where supported).
+  4. hermes               Start a test chat to confirm the model responds.
+  5. sh bots sync          Publish local profiles/<profile>/soul.md to Hermes.
+  6. sh bots start         Start services only when configuration is ready.
+
+Notes:
+  - LLM authentication is managed by Hermes, not by sh bots init or sync.
+  - Some providers require API keys, subscriptions, or separate billing.
+  - Configure config.json to choose which profiles receive TEAM.md
+    and which synchronized profile fixture queues the watcher monitors.
+  - See README.md, "Connect an AI model (LLM) to Hermes", for provider details.
+
+Keep the bots command at the project root and the service scripts under bin/.
+HELP
+}
+
+
+install_hermes_if_missing() {
+    if command -v hermes >/dev/null 2>&1 || \
+       [ -x "$HOME/.hermes/hermes-agent/.hermes/bin/hermes" ]; then
+        echo 'Hermes CLI already installed; skipping installation.'
+        return 0
+    fi
+
+    echo 'Hermes CLI not found. Installing from the official Hermes installer...'
+    if ! command -v curl >/dev/null 2>&1; then
+        echo 'ERROR: curl is required to install Hermes CLI.' >&2
+        return 1
+    fi
+    if ! command -v bash >/dev/null 2>&1; then
+        echo 'ERROR: bash is required to install Hermes CLI.' >&2
+        return 1
+    fi
+    installer=$(mktemp "${TMPDIR:-/tmp/}hermes-installer.XXXXXXXX") || return 1
+    # Download before executing, so download failures can never execute partial scripts.
+    if ! curl --fail --silent --show-error --location \
+        'https://hermes-agent.nousresearch.com/install.sh' -o "$installer"; then
+        rm -f "$installer"
+        echo 'ERROR: Could not download the official Hermes installer.' >&2
+        return 1
+    fi
+    if ! bash "$installer"; then
+        rm -f "$installer"
+        echo 'ERROR: Hermes CLI installation failed; profiles were not created.' >&2
+        return 1
+    fi
+    rm -f "$installer"
+    # New commands do not need a shell reload: bots already adds ~/.local/bin to PATH.
+    if ! command -v hermes >/dev/null 2>&1 && \
+       [ ! -x "$HOME/.hermes/hermes-agent/.hermes/bin/hermes" ]; then
+        echo 'ERROR: Installer finished, but Hermes CLI could not be located.' >&2
+        return 1
+    fi
+    echo 'Hermes CLI installed successfully.'
+}
+
+ensure_watcher_env() {
+    VENV_PYTHON="$WATCHER_DIR/.venv/bin/python"
+    DEPENDENCY_STAMP="$WATCHER_DIR/.venv/.watcher-dependencies"
+    DEPENDENCIES=$(/usr/bin/python3 "$BIN_DIR/profiles.py" --watcher-dependencies) || return 1
+    if [ -z "$DEPENDENCIES" ]; then
+        echo 'ERROR: config.json watcher.dependencies is empty.' >&2
+        return 1
+    fi
+    if [ ! -x "$VENV_PYTHON" ]; then
+        echo "Creating watcher virtual environment: $WATCHER_DIR/.venv"
+        /usr/bin/python3 -m venv "$WATCHER_DIR/.venv" || {
+            echo 'ERROR: Could not create the watcher virtual environment.' >&2
+            return 1
+        }
+    fi
+    CURRENT_DEPENDENCIES=''
+    if [ -f "$DEPENDENCY_STAMP" ]; then
+        CURRENT_DEPENDENCIES=$(/bin/cat "$DEPENDENCY_STAMP")
+    fi
+    if [ "$CURRENT_DEPENDENCIES" != "$DEPENDENCIES" ] || \
+       ! "$VENV_PYTHON" -c 'import watchdog' >/dev/null 2>&1; then
+        echo 'Installing watcher dependencies...'
+        set --
+        while IFS= read -r dependency; do
+            [ -n "$dependency" ] && set -- "$@" "$dependency"
+        done <<EOF
+$DEPENDENCIES
+EOF
+        "$VENV_PYTHON" -m pip install --disable-pip-version-check "$@" || {
+            echo 'ERROR: Could not install watcher dependencies.' >&2
+            return 1
+        }
+        printf '%s\n' "$DEPENDENCIES" > "$DEPENDENCY_STAMP"
+    fi
+    "$VENV_PYTHON" -c 'import watchdog; from watchdog.observers import Observer' || {
+        echo 'ERROR: Watcher dependency verification failed.' >&2
+        return 1
+    }
+    echo 'Watcher Python environment is ready.'
+}
+
+init_fixtures() {
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || \
+       pgrep -f '[w]atcher.py' >/dev/null 2>&1; then
+        echo 'BLOCKED: stop the watcher before initialization (sh bots stop).' >&2
+        return 1
+    fi
+    install_hermes_if_missing || return 1
+    ensure_watcher_env || return 1
+    HERMES=$(hermes_bin)
+    HERMES_BIN="$HERMES" /usr/bin/python3 "$BIN_DIR/setup.py"
+}
+
+configured_profiles() {
+    /usr/bin/python3 "$BIN_DIR/profiles.py" --configured "${1:-all}"
+}
+
+# Hermes CLI wraps Python, so inspect the full process command and retain only
+# profiles selected in config.json.
+active_bot_jobs() {
+    /usr/bin/python3 - <<'PYACTIVE'
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+root = Path(os.environ['HERMES_WATCHER_DIR'])
+sys.path.insert(0, str(root / 'bin'))
+from profiles import configured_profiles
+
+allowed = set(configured_profiles('all'))
+pattern = re.compile(r'\s-p\s+([A-Za-z][A-Za-z0-9_-]*)\s+chat(?:\s|$)')
+output = subprocess.check_output(['/bin/ps', '-axo', 'pid=,command='], text=True, errors='replace')
+for line in output.splitlines():
+    match = pattern.search(line)
+    if match and match.group(1) in allowed and 'hermes' in line.lower():
+        print(line.strip())
+PYACTIVE
+}
+
+# List only CLI one-shot processes for configured profiles.
+# Avoid broad pkill/pgrep patterns: other Hermes gateway/desktop processes must survive.
+cli_tasks() {
+    /usr/bin/python3 - <<'PYCLI'
+import re
+import subprocess
+import os
+from pathlib import Path
+import sys
+
+root = Path(os.environ['HERMES_WATCHER_DIR'])
+sys.path.insert(0, str(root / 'bin'))
+from profiles import configured_profiles
+allowed = set(configured_profiles('all'))
+
+output = subprocess.check_output(
+    ['/bin/ps', '-axo', 'pid=,command='], text=True, errors='replace'
+)
+pattern = re.compile(
+    r'\s-p\s+([A-Za-z][A-Za-z0-9_-]*)\s+'
+    r'chat\s+--oneshot\s+--query-file\s+\S+'
+)
+for line in output.splitlines():
+    parts = line.strip().split(None, 1)
+    if len(parts) != 2 or not parts[0].isdigit():
+        continue
+    pid, command = parts
+    match = pattern.search(command)
+    if match and match.group(1) in allowed and ('hermes' in command.lower()):
+        print(pid, match.group(1))
+PYCLI
+}
+
+cancel_cli_tasks() {
+    # Cancel only Hermes CLI one-shot processes. Clean up narrowly scoped,
+    # newly-created Markdown output files when a request ticket can be proven.
+    /usr/bin/python3 - <<'PYCANCEL'
+import datetime as dt
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import time
+
+root = Path(os.environ['HERMES_WATCHER_DIR'])
+import sys
+sys.path.insert(0, str(root / 'bin'))
+from profiles import configured_profiles
+allowed_profiles = set(configured_profiles('all'))
+ps_output = subprocess.check_output(['/bin/ps', '-axo', 'pid=,command='], text=True, errors='replace')
+pattern = re.compile(r'\s-p\s+([A-Za-z][A-Za-z0-9_-]*)\s+chat\s+--oneshot\s+--query-file\s+(\S+)')
+
+jobs = []
+for line in ps_output.splitlines():
+    pid_field, _, command = line.strip().partition(' ')
+    if not pid_field.isdecimal() or 'hermes' not in command.lower():
+        continue
+    match = pattern.search(command)
+    if match and match.group(1) in allowed_profiles:
+        jobs.append((int(pid_field), match.group(1), Path(match.group(2))))
+
+if not jobs:
+    print('No active Hermes CLI one-shot tasks found.')
+    raise SystemExit(0)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def job_start(pid):
+    # BSD/macOS ps provides process start time; treat failure conservatively.
+    try:
+        value = subprocess.check_output(['/bin/ps', '-p', str(pid), '-o', 'lstart='], text=True).strip()
+        return time.mktime(time.strptime(' '.join(value.split()), '%a %b %d %H:%M:%S %Y'))
+    except (ValueError, OSError, subprocess.CalledProcessError):
+        return None
+
+
+def ticket_from_prompt(prompt):
+    try:
+        text = prompt.read_text(encoding='utf-8')
+    except OSError:
+        return None, None
+    m = re.search(r'Read this exact local Markdown file:\s*(/[^\n]*?\.md)(?:\s|\.|$)', text, re.I)
+    if not m:
+        return None, None
+    incoming = Path(m.group(1))
+    if incoming.parent.parent != root/'fixtures' or incoming.parent.name not in allowed_profiles:
+        return None, None
+    name = re.fullmatch(r'([A-Za-z][A-Za-z0-9_-]*)-([A-Za-z0-9_-]+)\.md', incoming.name, re.I)
+    if not name or name.group(1).lower() not in {profile.lower() for profile in allowed_profiles}:
+        return None, None
+    return name.group(2), incoming
+
+
+def collect(ticket, incoming, started):
+    # Only identifiable output Markdown, born during this CLI task.
+    if not ticket or started is None:
+        return []
+    names = {f'{p}-{ticket}.md' for p in allowed_profiles}
+    names.add(f'{ticket}.md')
+    results = []
+    for dirname in allowed_profiles:
+        folder = root/'fixtures'/dirname
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        paths = folder.glob('*.md')
+        for p in paths:
+            if p.name not in names or p == incoming or p.is_symlink() or not p.is_file():
+                continue
+            stat = p.stat()
+            born = getattr(stat, 'st_birthtime', None)
+            if born is not None and born >= started - 1.0:
+                results.append(p)
+        # Include matching handoff evidence in configured ticket work folders,
+        # but never remove source code or unrelated Markdown.
+        ticket_dir = folder/ticket
+        if ticket_dir.is_dir() and not ticket_dir.is_symlink():
+            for p in ticket_dir.glob('*.md'):
+                if p.name in names and not p.is_symlink() and p.is_file():
+                    born = getattr(p.stat(), 'st_birthtime', None)
+                    if born is not None and born >= started - 1.0:
+                        results.append(p)
+    return results
+
+failed = False
+for pid, profile, prompt in jobs:
+    started = job_start(pid)
+    ticket, incoming = ticket_from_prompt(prompt)
+    print(f'Cancelling Hermes PID {pid} ({profile})' + (f' ticket={ticket}' if ticket else ' (unattributed console request)'))
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        print(f'  PID {pid} already exited')
+    except PermissionError:
+        print(f'  ERROR: cannot signal PID {pid}')
+        failed = True
+        continue
+
+    for _ in range(50):
+        if not alive(pid):
+            break
+        time.sleep(.1)
+    if alive(pid):
+        print(f'  WARNING: PID {pid} is still alive; no files removed.')
+        failed = True
+        continue
+    if not ticket:
+        print('  No verifiable ticket in CLI prompt; files preserved.')
+        continue
+    targets = collect(ticket, incoming, started)
+    for p in targets:
+        try:
+            p.unlink()
+            print(f'  Removed newly-created ticket output: {p}')
+        except OSError as exc:
+            print(f'  Could not remove {p}: {exc}')
+            failed = True
+    if not targets:
+        print('  No safely attributable new Markdown outputs found.')
+    print('  Incoming request and existing artifacts preserved; non-Markdown code left untouched.')
+
+print('WARNING: Gateway-side tasks may continue after the CLI exits. Review ticket history before retrying.')
+raise SystemExit(1 if failed else 0)
+PYCANCEL
+}
+
+clean_fixtures() {
+    ROOT="$WATCHER_DIR"
+    HISTORY="$WATCHER_DIR/submission_history.jsonl"
+    LOG_DIR="$WATCHER_DIR/logs"
+    if [ ! -d "$ROOT" ]; then
+        echo "ERROR: Fixtures root does not exist: $ROOT" >&2
+        return 1
+    fi
+    # Never clear state/logs or handoffs while the watcher or a task is active.
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || \
+       pgrep -f '[w]atcher.py' >/dev/null 2>&1 || \
+       [ -n "$(cli_tasks)" ]; then
+        echo 'BLOCKED: watcher service or Hermes work appears active.' >&2
+        echo 'Finish/cancel active work, then stop services with: sh bots stop' >&2
+        return 1
+    fi
+
+    PROFILE_LIST=$(configured_profiles all)
+    count=0
+    for folder in $PROFILE_LIST; do
+        dir="$ROOT/fixtures/$folder"
+        if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+            n=$(find -P "$dir" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
+            printf '%s: %s Markdown file(s)\n' "$folder" "$n"
+            count=$((count + n))
+        else
+            echo "Skipping missing or linked directory: $dir"
+        fi
+    done
+
+    history_count=0
+    if [ -f "$HISTORY" ] && [ ! -L "$HISTORY" ]; then
+        history_count=1
+    fi
+    logs_present=0
+    log_count=0
+    if [ -d "$LOG_DIR" ] && [ ! -L "$LOG_DIR" ]; then
+        logs_present=1
+        log_count=$(find -P "$LOG_DIR" -mindepth 1 | wc -l | tr -d ' ')
+    fi
+    printf 'Submission history: %s file(s)\n' "$history_count"
+    printf 'Logs directory: %s (%s nested entries)\n' \
+        "$([ "$logs_present" -eq 1 ] && printf present || printf absent)" "$log_count"
+    echo 'Preserved: source subdirectories, non-team fixtures, and artifacts/.'
+
+    if [ $((count + history_count + logs_present)) -eq 0 ]; then
+        echo 'Nothing to clean.'
+        return 0
+    fi
+    if [ ! -t 0 ]; then
+        echo 'ERROR: clean needs an interactive Terminal for confirmation.' >&2
+        return 1
+    fi
+    echo 'WARNING: Removing submission history also resets duplicate-dispatch protection.'
+    printf 'Permanently delete the listed handoffs, history, and logs? [y/N] '
+    IFS= read -r confirmation || confirmation=''
+    case "$confirmation" in
+        [Yy]|[Yy][Ee][Ss]) ;;
+        *)
+            echo 'Cancelled. No files deleted.'
+            return 0 ;;
+    esac
+
+    for folder in $PROFILE_LIST; do
+        dir="$ROOT/fixtures/$folder"
+        if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+            find -P "$dir" -maxdepth 1 -type f -name '*.md' -exec rm -f -- {} +
+        fi
+    done
+    if [ -f "$HISTORY" ] && [ ! -L "$HISTORY" ]; then
+        rm -f -- "$HISTORY"
+    fi
+    if [ -d "$LOG_DIR" ] && [ ! -L "$LOG_DIR" ]; then
+        /bin/rm -rf -- "$LOG_DIR"
+    fi
+    echo 'Cleaning complete. Handoffs and submission history cleared; logs directory removed.'
+}
+
+console_repl() {
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        echo 'ERROR: Console requires an interactive Terminal pane.' >&2
+        exit 1
+    fi
+
+    HERMES=$(hermes_bin)
+    CONSOLE_PROFILES=$(configured_profiles team)
+    if [ -z "$CONSOLE_PROFILES" ]; then
+        echo 'ERROR: config.json team.profiles is empty; no console targets are available.' >&2
+        exit 1
+    fi
+    GUARD_DIR="$WATCHER_DIR/.console-send.lock"
+    mkdir -p "$WATCHER_DIR"
+    HELD_LOCK=0
+    CURRENT_PROMPT=''
+    console_cleanup() {
+        if [ -n "$CURRENT_PROMPT" ]; then rm -f "$CURRENT_PROMPT"; fi
+        if [ "$HELD_LOCK" -eq 1 ]; then
+            rm -f "$GUARD_DIR/pid"
+            rmdir "$GUARD_DIR" 2>/dev/null || true
+        fi
+    }
+    trap 'console_cleanup' EXIT
+    trap 'exit 130' INT TERM HUP
+    echo "Hermes guarded console. Configured profiles: $(printf '%s\n' "$CONSOLE_PROFILES" | tr '\n' ' ')"
+    echo 'Select one profile. Its named session remains active for every message.'
+    echo 'At the profile prompt, type exit; or press Ctrl+C to close the console.'
+
+    target=''
+    while [ -z "$target" ]; do
+        printf 'bots> '
+        if ! IFS= read -r selection; then return 0; fi
+        case "$selection" in
+            'exit;') return 0 ;;
+            help)
+                echo "Select a configured team profile: $(printf '%s\n' "$CONSOLE_PROFILES" | tr '\n' ' ')"
+                echo 'status: inspect active Hermes bot chat processes; cancel: terminate active CLI task(s).'
+                echo 'exit;: close console. Ctrl+C also exits.'
+                continue ;;
+            cancel)
+                cancel_cli_tasks
+                continue ;;
+            status)
+                jobs=$(active_bot_jobs)
+                if [ -n "$jobs" ]; then printf 'Active bot CLI tasks:\n%s\n' "$jobs"; else echo 'No active Hermes bot CLI tasks detected.'; fi
+                continue ;;
+            '') continue ;;
+            *)
+                if printf '%s\n' "$CONSOLE_PROFILES" | grep -Fqx -- "$selection"; then
+                    target=$selection
+                else
+                    echo 'Unknown choice. Enter a configured profile, status, cancel, help, or exit;.'
+                fi ;;
+        esac
+    done
+
+    SESSION_NAME="nexs-hermes-bots-console-$target"
+    echo "Continuing session '$SESSION_NAME' for profile '$target'."
+    while :; do
+        printf '%s> ' "$target"
+        if ! IFS= read -r message; then return 0; fi
+        case "$message" in
+            'exit;') return 0 ;;
+            '') echo 'Empty message; nothing sent.'; continue ;;
+        esac
+
+        jobs=$(active_bot_jobs)
+        if [ -n "$jobs" ]; then
+            echo 'BLOCKED: another Hermes bot CLI task is already running:'
+            printf '%s\n' "$jobs" | cut -c 1-240
+            echo 'No message was sent; retry it after the active task finishes.'
+            continue
+        fi
+
+        # Atomic lock prevents two instances of THIS console from submitting
+        # together. It does not synchronize with the independent file watcher.
+        if ! mkdir "$GUARD_DIR" 2>/dev/null; then
+            echo 'BLOCKED: another console submission lock exists.'
+            echo "Inspect $GUARD_DIR if you believe it is stale; do not remove it while another console is active."
+            continue
+        fi
+        HELD_LOCK=1
+        printf '%s\n' "$$" > "$GUARD_DIR/pid"
+
+        jobs=$(active_bot_jobs)
+        if [ -n "$jobs" ]; then
+            echo 'BLOCKED: Hermes bot activity appeared before submission. No message was sent.'
+            printf '%s\n' "$jobs" | cut -c 1-240
+            rm -f "$GUARD_DIR/pid"
+            rmdir "$GUARD_DIR"
+            HELD_LOCK=0
+            continue
+        fi
+
+        prompt=$(mktemp "${TMPDIR:-/tmp/}hermes-console.XXXXXXXX") || {
+            rm -f "$GUARD_DIR/pid"; rmdir "$GUARD_DIR"; HELD_LOCK=0
+            echo 'ERROR: Could not create message file.' >&2
+            continue
+        }
+        CURRENT_PROMPT="$prompt"
+        chmod 600 "$prompt"
+        {
+            printf 'The Hermes bots project root for this task is: %s.\n' "$WATCHER_DIR"
+            printf 'The fixture root for all handoffs and ticket work is: %s/fixtures.\n\n' "$WATCHER_DIR"
+            printf '%s\n' "$message"
+        } > "$prompt"
+        echo "Sending to Hermes profile '$target' in session '$SESSION_NAME'..."
+        # Each finite CLI turn resumes the same named Hermes conversation.
+        "$HERMES" -p "$target" chat --oneshot --query-file "$prompt" \
+            --continue "$SESSION_NAME" --create-if-missing --in "$WATCHER_DIR" --source cli \
+            && result=0 || result=$?
+        rm -f "$prompt" "$GUARD_DIR/pid"
+        rmdir "$GUARD_DIR" 2>/dev/null || true
+        HELD_LOCK=0
+        CURRENT_PROMPT=''
+        echo "Hermes turn exited with status $result; session '$SESSION_NAME' remains selected."
+    done
+}
+
+case "${1:-}" in
+    init)
+        init_fixtures
+        ;;
+    help|-h|--help|'')
+        show_help
+        ;;
+    sync)
+        HERMES=$(hermes_bin)
+        HERMES_BIN="$HERMES" /usr/bin/python3 "$BIN_DIR/sync.py"
+        ;;
+    start)
+        configured_profiles all >/dev/null
+        ensure_watcher_env
+        HERMES=$(hermes_bin)
+        echo 'Starting/ensuring Hermes Gateway (no Desktop app)...'
+        "$HERMES" gateway start || {
+            echo 'Gateway start returned an error; checking its current status...' >&2
+            "$HERMES" gateway status || exit 1
+        }
+        EXPECTED_LAUNCHER="$BIN_DIR/run.sh"
+        CONFIGURED_LAUNCHER=''
+        if [ -f "$PLIST" ]; then
+            CONFIGURED_LAUNCHER=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$PLIST" 2>/dev/null || true)
+        fi
+        if [ -f "$BIN_DIR/install.sh" ] && [ -f "$EXPECTED_LAUNCHER" ] && \
+           { [ ! -f "$PLIST" ] || [ "$CONFIGURED_LAUNCHER" != "$EXPECTED_LAUNCHER" ]; }; then
+            echo 'Installing or updating the Hermes watcher LaunchAgent...'
+            /bin/bash "$BIN_DIR/install.sh"
+        elif launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+            echo 'Hermes watcher service is already loaded; not launching a duplicate.'
+        elif [ -f "$PLIST" ]; then
+            echo 'Loading existing Hermes watcher LaunchAgent...'
+            launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+            launchctl bootstrap "$DOMAIN" "$PLIST"
+        else
+            echo 'ERROR: Watcher LaunchAgent not installed and service scripts not found under bin/.' >&2
+            exit 1
+        fi
+        echo 'Startup requested. Headless launcher verifies gateway readiness before dispatching.'
+        echo "Monitor: sh \"$CLI_SCRIPT\" logs"
+        ;;
+    cancel)
+        cancel_cli_tasks
+        ;;
+    clean)
+        clean_fixtures
+        ;;
+    stop)
+        if [ -f "$BIN_DIR/stop.sh" ]; then
+            /bin/bash "$BIN_DIR/stop.sh"
+        else
+            echo 'Stopping Hermes watcher LaunchAgent...'
+            if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+                launchctl bootout "$DOMAIN/$LABEL"
+            fi
+            echo 'Stopping Hermes Gateway...'
+            "$(hermes_bin)" gateway stop
+            echo 'NOTE: A watcher started manually in another terminal may still be running.'
+        fi
+        ;;
+    uninstall)
+        if [ ! -f "$BIN_DIR/uninstall.sh" ]; then
+            echo 'ERROR: uninstall.sh not found under bin/.' >&2
+            exit 1
+        fi
+        /bin/bash "$BIN_DIR/uninstall.sh"
+        ;;
+    status)
+        echo '--- Hermes Gateway ---'
+        "$(hermes_bin)" gateway status || true
+        echo '--- Hermes watcher LaunchAgent ---'
+        if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+            echo 'Loaded:'
+            launchctl print "$DOMAIN/$LABEL" | grep -E 'state =|pid =|last exit code =' || true
+        else
+            echo 'Not loaded'
+        fi
+        echo '--- Watcher processes ---'
+        pgrep -fl '(^|/)watcher\.py' || true
+        ;;
+    console)
+        if ! command -v tmux >/dev/null 2>&1; then
+            echo 'ERROR: tmux is not installed. Install it with: brew install tmux' >&2
+            exit 1
+        fi
+        if [ ! -t 0 ] || [ ! -t 1 ]; then
+            echo 'ERROR: Run sh bots console from an interactive Terminal.' >&2
+            exit 1
+        fi
+        SESSION='hermes-bots-guarded'
+        if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+            # Start directly in the guarded REPL, without ever creating a logs pane.
+            tmux new-session -d -s "$SESSION" -c "$WATCHER_DIR" -n console \
+                "sh '$CLI_SCRIPT' _console_repl"
+        else
+            # Old sessions may contain a left logs pane and a right guarded REPL.
+            # The guarded REPL is the LAST pane in our previous two-pane layout.
+            # Keep it and remove all other panes; do not interrupt the REPL.
+            KEEP_PANE=$(tmux list-panes -t "$SESSION:0" -F '#{pane_id}' | tail -n 1)
+            if [ -n "$KEEP_PANE" ]; then
+                tmux kill-pane -a -t "$KEEP_PANE"
+                tmux select-pane -t "$KEEP_PANE"
+            fi
+        fi
+        if [ -n "${TMUX:-}" ]; then
+            tmux switch-client -t "$SESSION"
+        else
+            exec tmux attach-session -t "$SESSION"
+        fi
+        ;;
+    _console_repl)
+        console_repl
+        ;;
+    logs)
+        mkdir -p "$WATCHER_DIR/logs"
+        # Read configured profile logs and the watcher service log.
+        set -- "$WATCHER_DIR/logs/watcher-service.log"
+        for profile in $(configured_profiles all); do
+            set -- "$@" "$WATCHER_DIR/logs/$profile.log"
+        done
+        touch "$@"
+        exec tail -n 20 -F "$@"
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        show_help >&2
+        exit 2
+        ;;
+esac

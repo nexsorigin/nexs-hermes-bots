@@ -1,0 +1,9 @@
+{
+  "watcher": {
+    "profiles": ["support", "qa", "developer"],
+    "dependencies": ["watchdog>=4,<7"]
+  },
+  "team": {
+    "profiles": ["support", "developer", "qa"]
+  }
+}

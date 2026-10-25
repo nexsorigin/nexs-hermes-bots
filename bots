@@ -482,8 +482,14 @@ console_repl() {
     }
     trap 'console_cleanup' EXIT
     trap 'exit 130' INT TERM HUP
-    echo "Hermes guarded console. Configured profiles: $(printf '%s\n' "$CONSOLE_PROFILES" | tr '\n' ' ')"
-    echo 'Select one profile. Its named session remains active for every message.'
+    echo 'Hermes guarded console.'
+    echo 'Available team profiles:'
+    profile_number=1
+    for profile in $CONSOLE_PROFILES; do
+        printf '  %s) %s\n' "$profile_number" "$profile"
+        profile_number=$((profile_number + 1))
+    done
+    echo 'Select one profile by number or name. Its named session remains active for every message.'
     echo 'At the profile prompt, type exit; or press Ctrl+C to close the console.'
 
     target=''
@@ -493,7 +499,13 @@ console_repl() {
         case "$selection" in
             'exit;') return 0 ;;
             help)
-                echo "Select a configured team profile: $(printf '%s\n' "$CONSOLE_PROFILES" | tr '\n' ' ')"
+                echo 'Available team profiles:'
+                profile_number=1
+                for profile in $CONSOLE_PROFILES; do
+                    printf '  %s) %s\n' "$profile_number" "$profile"
+                    profile_number=$((profile_number + 1))
+                done
+                echo 'Select a profile by number or exact name.'
                 echo 'status: inspect active Hermes bot chat processes; cancel: terminate active CLI task(s).'
                 echo 'exit;: close console. Ctrl+C also exits.'
                 continue ;;
@@ -509,7 +521,17 @@ console_repl() {
                 if printf '%s\n' "$CONSOLE_PROFILES" | grep -Fqx -- "$selection"; then
                     target=$selection
                 else
-                    echo 'Unknown choice. Enter a configured profile, status, cancel, help, or exit;.'
+                    profile_number=1
+                    for profile in $CONSOLE_PROFILES; do
+                        if [ "$selection" = "$profile_number" ]; then
+                            target=$profile
+                            break
+                        fi
+                        profile_number=$((profile_number + 1))
+                    done
+                fi
+                if [ -z "$target" ]; then
+                    echo 'Unknown choice. Enter a listed profile number or name, status, cancel, help, or exit;.'
                 fi ;;
         esac
     done

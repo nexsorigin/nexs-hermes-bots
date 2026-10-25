@@ -8,3 +8,5 @@ __pycache__/
 !/artifacts/README.md
 /logs/
 config.json
+submission_history.jsonl
+fixtures

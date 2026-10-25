@@ -101,9 +101,9 @@ if [[ -d "$EXPAT_LIB" ]]; then
   export DYLD_LIBRARY_PATH="$EXPAT_LIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 fi
 export PYTHONUNBUFFERED=1
-printf '[%s] Hermes ready; starting watcher LIVE (new file events only).\n' "$(date)"
+printf '[%s] Hermes ready; starting watcher LIVE (new events plus unseen existing handoffs).\n' "$(date)"
 
 # launchd already captures watcher stdout/stderr; do not duplicate bot logs
 # by tailing them into watcher-service.log. Use `sh bots logs` interactively.
 mkdir -p "$WATCHER_DIR/logs"
-exec "$WATCHER_DIR/.venv/bin/python" -u "$SCRIPT_DIR/watcher.py" --live
+exec "$WATCHER_DIR/.venv/bin/python" -u "$SCRIPT_DIR/watcher.py" --live --scan-existing

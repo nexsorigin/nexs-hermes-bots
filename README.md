@@ -58,9 +58,9 @@ To customize the team, edit the profile lists in `config.json` and create matchi
 
 **`sh bots init` does not explicitly start the gateway, watcher, LaunchAgent, or any bot.** The upstream Hermes installer is a third-party script and may have its own setup behavior. Profile creation and authorization may also require interaction. Manual CLI or Desktop conversations do not automatically receive the `TEAM.md` injection; it is applied by the file watcher to dispatched tasks.
 
-`sh bots start` also verifies the watcher environment and creates it if needed before starting the Gateway. This makes a fresh clone self-contained; no manual virtual-environment setup is required.
+`sh bots start` also verifies the watcher environment and creates it if needed before starting the Gateway. This makes a fresh clone self-contained; no manual virtual-environment setup is required. On every watcher start, existing handoff Markdown files under configured watcher profile queues are scanned as recovery candidates. Files already recorded with the same path and content hash in `submission_history.jsonl` are skipped, while unseen files created during watcher downtime are dispatched.
 
-`sh bots console` asks for one profile from `team.profiles`, then sends every message to that profile's persistent named session. The same session is resumed across turns and future console launches. Type `exit;` at the profile prompt or press Ctrl+C to leave; the console does not return to profile selection after each turn.
+`sh bots console` displays a numbered list containing only profiles from `team.profiles`. Select one by number or exact name, then every message is sent to that profile's persistent named session. The same session is resumed across turns and future console launches. Type `exit;` at the profile prompt or press Ctrl+C to leave; the console does not return to profile selection after each turn.
 
 If your previous installation used the LaunchAgent `local.hermes.file-watcher`, stop and unload it before switching directories: the new install uses the same generic label and should not be competing with an old job pointing to the original path. The scripts do not remove the old installation automatically.
 

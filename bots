@@ -65,6 +65,49 @@ print(json.dumps(value))
     done
 }
 
+show_latest_agent_message() {
+    HERMES=$1
+    PROFILE=$2
+    SESSION_NAME=$3
+    EXPORT_FILE=$4
+
+    if ! "$HERMES" -p "$PROFILE" sessions export --format jsonl \
+        --title "$SESSION_NAME" - > "$EXPORT_FILE"; then
+        return 1
+    fi
+    /usr/bin/python3 - "$SESSION_NAME" "$EXPORT_FILE" <<'PYLATEST'
+import json
+import sys
+from pathlib import Path
+
+session_name = sys.argv[1]
+export_file = Path(sys.argv[2])
+session = None
+for raw in export_file.read_text(encoding='utf-8').splitlines():
+    if not raw.strip():
+        continue
+    record = json.loads(raw)
+    if record.get('title') == session_name:
+        session = record
+        break
+
+latest = None
+for message in reversed((session or {}).get('messages') or []):
+    content = message.get('content')
+    if message.get('role') == 'assistant' and isinstance(content, str) and content.strip():
+        latest = content.rstrip()
+        break
+
+print()
+if latest is None:
+    print('Most recent agent message: (none yet)')
+else:
+    print('Most recent agent message:')
+    print(latest)
+print()
+PYLATEST
+}
+
 show_help() {
     cat <<'HELP'
 Hermes Bot Manager
@@ -96,8 +139,8 @@ Commands:
   logs       Follow watcher and configured profile logs (Ctrl+C to exit).
   console    Open a guarded console for profiles under team.profiles (no log pane).
              Adds narrow background-click approval to those profiles, preserving
-             existing allowlist entries. Uses normal terminal text selection for
-             copy/paste. Blocks messages while a Hermes bot CLI task is running.
+             existing allowlist entries. Shows the latest agent message after profile
+             selection; Esc clears current input. Blocks concurrent bot CLI tasks.
   uninstall  Permanently uninstall Hermes, all Hermes user data, and related
              LaunchAgents after a yes/no confirmation (default: no).
              Preserves this Git checkout.
@@ -514,8 +557,14 @@ console_repl() {
     mkdir -p "$WATCHER_DIR"
     HELD_LOCK=0
     CURRENT_PROMPT=''
+    CURRENT_EXPORT=''
+    ORIGINAL_STTY=''
     console_cleanup() {
+        if [ -n "$ORIGINAL_STTY" ]; then
+            stty "$ORIGINAL_STTY" 2>/dev/null || true
+        fi
         if [ -n "$CURRENT_PROMPT" ]; then rm -f "$CURRENT_PROMPT"; fi
+        if [ -n "$CURRENT_EXPORT" ]; then rm -f "$CURRENT_EXPORT"; fi
         if [ "$HELD_LOCK" -eq 1 ]; then
             rm -f "$GUARD_DIR/pid"
             rmdir "$GUARD_DIR" 2>/dev/null || true
@@ -577,8 +626,29 @@ console_repl() {
         esac
     done
 
+    ORIGINAL_STTY=$(stty -g) || {
+        echo 'ERROR: Could not read terminal settings.' >&2
+        return 1
+    }
+    ESCAPE_CHAR=$(printf '\033')
+    if ! stty kill "$ESCAPE_CHAR"; then
+        echo 'ERROR: Could not configure Escape to clear console input.' >&2
+        return 1
+    fi
     SESSION_NAME="nexs-hermes-bots-console-$target"
     echo "Continuing session '$SESSION_NAME' for profile '$target'."
+    CURRENT_EXPORT=$(mktemp "${TMPDIR:-/tmp/}hermes-console-session.XXXXXXXX") || {
+        echo 'WARNING: Could not create a temporary session export file; latest message unavailable.' >&2
+        CURRENT_EXPORT=''
+    }
+    if [ -n "$CURRENT_EXPORT" ]; then
+        if ! show_latest_agent_message "$HERMES" "$target" "$SESSION_NAME" "$CURRENT_EXPORT"; then
+            echo 'WARNING: Could not load the most recent agent message.' >&2
+        fi
+        rm -f "$CURRENT_EXPORT"
+        CURRENT_EXPORT=''
+    fi
+    echo 'Press Esc to clear the current input. Type exit; or press Ctrl+C to close the console.'
     while :; do
         printf '%s> ' "$target"
         if ! IFS= read -r message; then return 0; fi
@@ -747,9 +817,18 @@ case "${1:-}" in
                 tmux select-pane -t "$KEEP_PANE"
             fi
         fi
-        # Do not let tmux consume drag selection. This keeps normal macOS terminal
-        # copy/paste available (drag, Command+C, Command+V) for Hermes responses.
-        tmux set-option -t "$SESSION" mouse off
+        # Let tmux consume wheel events so they enter scrollback instead of being
+        # delivered to the REPL as arrow-key escape sequences. Dragging still
+        # copies a selection directly to the macOS clipboard.
+        tmux set-option -t "$SESSION" mouse on
+        if command -v pbcopy >/dev/null 2>&1; then
+            for COPY_TABLE in copy-mode copy-mode-vi; do
+                tmux bind-key -T "$COPY_TABLE" MouseDragEnd1Pane \
+                    if-shell -F "#{==:#{session_name},$SESSION}" \
+                    "send-keys -X copy-pipe-and-cancel 'pbcopy'" \
+                    'send-keys -X copy-pipe-and-cancel'
+            done
+        fi
         if [ -n "${TMUX:-}" ]; then
             tmux switch-client -t "$SESSION"
         else

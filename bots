@@ -140,7 +140,8 @@ Commands:
   console    Open a guarded console for profiles under team.profiles (no log pane).
              Adds narrow background-click approval to those profiles, preserving
              existing allowlist entries. Shows the latest agent message after profile
-             selection; Esc clears current input. Blocks concurrent bot CLI tasks.
+             selection; Shift+Enter adds a line and Esc clears current input.
+             Blocks concurrent bot CLI tasks.
   uninstall  Permanently uninstall Hermes, all Hermes user data, and related
              LaunchAgents after a yes/no confirmation (default: no).
              Preserves this Git checkout.
@@ -631,10 +632,11 @@ console_repl() {
         return 1
     }
     ESCAPE_CHAR=$(printf '\033')
-    if ! stty kill "$ESCAPE_CHAR"; then
+    if ! stty kill "$ESCAPE_CHAR" -echoctl; then
         echo 'ERROR: Could not configure Escape to clear console input.' >&2
         return 1
     fi
+    MULTILINE_MARKER=$(printf '\036')
     SESSION_NAME="nexs-hermes-bots-console-$target"
     echo "Continuing session '$SESSION_NAME' for profile '$target'."
     CURRENT_EXPORT=$(mktemp "${TMPDIR:-/tmp/}hermes-console-session.XXXXXXXX") || {
@@ -648,10 +650,38 @@ console_repl() {
         rm -f "$CURRENT_EXPORT"
         CURRENT_EXPORT=''
     fi
-    echo 'Press Esc to clear the current input. Type exit; or press Ctrl+C to close the console.'
+    echo 'Shift+Enter adds a new line; Enter sends. Esc clears the current input.'
+    echo 'Type exit; or press Ctrl+C to close the console.'
     while :; do
-        printf '%s> ' "$target"
-        if ! IFS= read -r message; then return 0; fi
+        message=''
+        message_lines=0
+        message_prompt="$target> "
+        while :; do
+            printf '%s' "$message_prompt"
+            if ! IFS= read -r message_line; then return 0; fi
+            case "$message_line" in
+                *"$MULTILINE_MARKER")
+                    message_line=${message_line%"$MULTILINE_MARKER"}
+                    if [ "$message_lines" -eq 0 ]; then
+                        message=$message_line
+                    else
+                        message="$message
+$message_line"
+                    fi
+                    message_lines=$((message_lines + 1))
+                    message_prompt='...> '
+                    ;;
+                *)
+                    if [ "$message_lines" -eq 0 ]; then
+                        message=$message_line
+                    else
+                        message="$message
+$message_line"
+                    fi
+                    break
+                    ;;
+            esac
+        done
         case "$message" in
             'exit;') return 0 ;;
             '') echo 'Empty message; nothing sent.'; continue ;;
@@ -821,6 +851,14 @@ case "${1:-}" in
         # delivered to the REPL as arrow-key escape sequences. Dragging still
         # copies a selection directly to the macOS clipboard.
         tmux set-option -t "$SESSION" mouse on
+        # Modified-key reporting lets tmux distinguish Shift+Enter from Enter.
+        # Shift+Enter sends an invisible continuation marker plus Enter; the REPL
+        # consumes the marker and keeps collecting lines until a plain Enter.
+        tmux set-option -s extended-keys on
+        tmux bind-key -n S-Enter \
+            if-shell -F "#{==:#{session_name},$SESSION}" \
+            'send-keys C-^ Enter' \
+            'send-keys S-Enter'
         if command -v pbcopy >/dev/null 2>&1; then
             for COPY_TABLE in copy-mode copy-mode-vi; do
                 tmux bind-key -T "$COPY_TABLE" MouseDragEnd1Pane \

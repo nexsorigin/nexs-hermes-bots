@@ -26,6 +26,45 @@ hermes_bin() {
     fi
 }
 
+ensure_console_click_approval() {
+    HERMES=$1
+    CLICK_APPROVAL='cua:click:background'
+    CONSOLE_PROFILES=$(configured_profiles team)
+    if [ -z "$CONSOLE_PROFILES" ]; then
+        echo 'ERROR: config.json team.profiles is empty; no console targets are available.' >&2
+        return 1
+    fi
+
+    echo 'Ensuring background-click approval for configured team profiles...'
+    for profile in $CONSOLE_PROFILES; do
+        allowlist=$("$HERMES" -p "$profile" config get command_allowlist --json) || {
+            echo "ERROR: Could not read Hermes approvals for profile '$profile'." >&2
+            return 1
+        }
+        updated=$(/usr/bin/python3 -c '
+import json
+import sys
+
+value = json.loads(sys.argv[1])
+if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    raise SystemExit("command_allowlist must be a list of strings")
+entry = sys.argv[2]
+if entry not in value:
+    value.append(entry)
+print(json.dumps(value))
+' "$allowlist" "$CLICK_APPROVAL") || {
+            echo "ERROR: Invalid command_allowlist for Hermes profile '$profile'." >&2
+            return 1
+        }
+        if [ "$updated" != "$allowlist" ]; then
+            "$HERMES" -p "$profile" config set command_allowlist "$updated" || {
+                echo "ERROR: Could not save background-click approval for profile '$profile'." >&2
+                return 1
+            }
+        fi
+    done
+}
+
 show_help() {
     cat <<'HELP'
 Hermes Bot Manager
@@ -56,7 +95,9 @@ Commands:
   status     Show Hermes Gateway, watcher service, and process status.
   logs       Follow watcher and configured profile logs (Ctrl+C to exit).
   console    Open a guarded console for profiles under team.profiles (no log pane).
-             Blocks new messages while a Hermes bot CLI task is running.
+             Adds narrow background-click approval to those profiles, preserving
+             existing allowlist entries. Uses normal terminal text selection for
+             copy/paste. Blocks messages while a Hermes bot CLI task is running.
   uninstall  Permanently uninstall Hermes, all Hermes user data, and related
              LaunchAgents after a yes/no confirmation (default: no).
              Preserves this Git checkout.
@@ -689,6 +730,8 @@ case "${1:-}" in
             echo 'ERROR: Run sh bots console from an interactive Terminal.' >&2
             exit 1
         fi
+        HERMES=$(hermes_bin)
+        ensure_console_click_approval "$HERMES"
         SESSION='hermes-bots-guarded'
         if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
             # Start directly in the guarded REPL, without ever creating a logs pane.
@@ -704,6 +747,9 @@ case "${1:-}" in
                 tmux select-pane -t "$KEEP_PANE"
             fi
         fi
+        # Do not let tmux consume drag selection. This keeps normal macOS terminal
+        # copy/paste available (drag, Command+C, Command+V) for Hermes responses.
+        tmux set-option -t "$SESSION" mouse off
         if [ -n "${TMUX:-}" ]; then
             tmux switch-client -t "$SESSION"
         else

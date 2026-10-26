@@ -780,7 +780,8 @@ case "${1:-}" in
             exit 1
         fi
         echo 'Startup requested. Headless launcher verifies gateway readiness before dispatching.'
-        echo "Monitor: sh \"$CLI_SCRIPT\" logs"
+        echo 'Following logs (Ctrl+C stops following; services keep running)...'
+        exec sh "$CLI_SCRIPT" logs
         ;;
     cancel)
         cancel_cli_tasks

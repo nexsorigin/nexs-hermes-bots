@@ -181,8 +181,9 @@ Commands:
   sync       Sync configured profiles with profiles/<profile>/soul.md (local wins),
              model routing from config.json, and back up changed Hermes SOUL.md.
              Never installs a provider or downloads a model.
-  start      Start Hermes Gateway and the Hermes watcher LaunchAgent.
-             Starts the watcher only once and waits for gateway readiness.
+  start      Start available configured local model services, the Hermes Gateway,
+             and the Hermes watcher LaunchAgent. Model services use init's guarded
+             checks; the watcher starts only once and waits for gateway readiness.
   stop       Stop the Hermes watcher, Hermes Gateway, and any available configured
              local model service using the same guarded checks as init.
              Keeps installed services and data for later use.
@@ -845,6 +846,13 @@ case "${1:-}" in
     start)
         configured_profiles all >/dev/null
         ensure_watcher_env
+        echo 'Starting available local model services...'
+        if [ -f "$BIN_DIR/model.py" ]; then
+            /usr/bin/python3 "$BIN_DIR/model.py" start || \
+                echo 'WARNING: Local model service startup could not be completed; continuing.' >&2
+        else
+            echo 'Model service startup skipped: helper is unavailable.'
+        fi
         HERMES=$(hermes_bin)
         echo 'Starting/ensuring Hermes Gateway (no Desktop app)...'
         "$HERMES" gateway start || {

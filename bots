@@ -106,6 +106,27 @@ message_file.write_text(latest, encoding='utf-8')
 PYLATEST
 }
 
+console_session_name() {
+    # One named session per profile and configured provider/model, so a model
+    # change starts a new session and switching back resumes the previous one.
+    HERMES=$1
+    PROFILE=$2
+    model_json=$("$HERMES" -p "$PROFILE" config get model --json) || return 1
+    model_slug=$(printf '%s' "$model_json" | /usr/bin/python3 -c '
+import json
+import re
+import sys
+
+model = json.load(sys.stdin)
+if not isinstance(model, dict):
+    model = {"default": str(model)}
+parts = [str(model.get("provider") or "auto"), str(model.get("default") or "default")]
+print(re.sub(r"[^A-Za-z0-9._-]+", "-", "-".join(parts)).strip("-"))
+') || return 1
+    [ -n "$model_slug" ] || return 1
+    printf 'nexs-hermes-bots-console-%s-%s\n' "$PROFILE" "$model_slug"
+}
+
 show_latest_agent_message() {
     HERMES=$1
     PROFILE=$2
@@ -702,8 +723,11 @@ console_repl() {
         return 1
     fi
     MULTILINE_MARKER=$(printf '\036')
-    SESSION_NAME="nexs-hermes-bots-console-$target"
-    echo "Continuing session '$SESSION_NAME' for profile '$target'."
+    SESSION_NAME=$(console_session_name "$HERMES" "$target") || {
+        echo "ERROR: Could not read the configured model for profile '$target'." >&2
+        return 1
+    }
+    echo "Continuing session '$SESSION_NAME' for profile '$target' (new model => new session)."
     CURRENT_EXPORT=$(mktemp "${TMPDIR:-/tmp/}hermes-console-session.XXXXXXXX") || {
         echo 'WARNING: Could not create a temporary session export file; latest message unavailable.' >&2
         CURRENT_EXPORT=''
@@ -800,6 +824,12 @@ $message_line"
             printf 'The fixture root for all handoffs and ticket work is: %s/fixtures.\n\n' "$WATCHER_DIR"
             printf '%s\n' "$message"
         } > "$prompt"
+        # The model may have changed since the last turn: switch to its session.
+        if CURRENT_SESSION=$(console_session_name "$HERMES" "$target") && \
+           [ "$CURRENT_SESSION" != "$SESSION_NAME" ]; then
+            SESSION_NAME=$CURRENT_SESSION
+            echo "Configured model changed; using session '$SESSION_NAME'."
+        fi
         echo "Sending to Hermes profile '$target' in session '$SESSION_NAME'..."
         # Each finite CLI turn resumes the same named Hermes conversation.
         "$HERMES" -p "$target" chat --oneshot --query-file "$prompt" \

@@ -127,7 +127,27 @@ show_latest_agent_message() {
 copy_file_to_clipboard() {
     CLIPBOARD_FILE=$1
     if command -v pbcopy >/dev/null 2>&1; then
-        pbcopy < "$CLIPBOARD_FILE"
+        if pbcopy < "$CLIPBOARD_FILE" && command -v pbpaste >/dev/null 2>&1; then
+            EXPECTED_CLIPBOARD=$(/bin/cat "$CLIPBOARD_FILE")
+            ACTUAL_CLIPBOARD=$(pbpaste 2>/dev/null || true)
+            if [ "$ACTUAL_CLIPBOARD" = "$EXPECTED_CLIPBOARD" ]; then
+                return 0
+            fi
+        fi
+        # pbcopy can return success without reaching the logged-in user's GUI
+        # pasteboard (notably from some tmux/bootstrap contexts). AppleScript
+        # targets that pasteboard directly; verify it through pbpaste as well.
+        if command -v osascript >/dev/null 2>&1 && \
+           osascript \
+               -e 'on run argv' \
+               -e 'set the clipboard to (read POSIX file (item 1 of argv) as «class utf8»)' \
+               -e 'end run' \
+               "$CLIPBOARD_FILE" >/dev/null 2>&1; then
+            EXPECTED_CLIPBOARD=$(/bin/cat "$CLIPBOARD_FILE")
+            ACTUAL_CLIPBOARD=$(pbpaste 2>/dev/null || true)
+            [ "$ACTUAL_CLIPBOARD" = "$EXPECTED_CLIPBOARD" ] && return 0
+        fi
+        return 1
     elif command -v wl-copy >/dev/null 2>&1; then
         wl-copy < "$CLIPBOARD_FILE"
     elif command -v xclip >/dev/null 2>&1; then
@@ -789,7 +809,7 @@ $message_line"
                 if copy_file_to_clipboard "$CURRENT_REPLY"; then
                     echo 'Answer copied to clipboard.'
                 else
-                    echo 'WARNING: Answer was not copied; no supported clipboard command was found.' >&2
+                    echo 'WARNING: The answer could not be verified on the system clipboard.' >&2
                 fi
             else
                 echo 'WARNING: Could not retrieve the completed answer for clipboard copying.' >&2

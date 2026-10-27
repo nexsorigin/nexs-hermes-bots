@@ -15,7 +15,7 @@
     "qa": {
       "provider": "ollama",
       "model": "qwen3.5:9b",
-      "base_url": "http://localhost:11434"
+      "base_url": "http://localhost:11434/v1"
     },
     "developer": {
       "provider": "openai-codex",

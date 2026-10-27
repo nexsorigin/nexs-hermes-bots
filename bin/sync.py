@@ -38,15 +38,27 @@ def sync_configured_models(names):
         if not settings:
             print(f'Model unchanged (not declared in config.json): {name}')
             continue
+        provider = settings['provider']
+        if provider == 'ollama':
+            # A named providers.ollama route is required for `hermes model` to
+            # recognize the stored provider. Bare `ollama` is otherwise only an
+            # alias to the generic custom runtime and the picker warns about it.
+            provider_values = [
+                ('providers.ollama.name', 'Ollama'),
+                ('providers.ollama.base_url', settings['base_url']),
+                ('providers.ollama.transport', 'openai_chat'),
+            ]
+            for key, value in provider_values:
+                subprocess.run([hermes, '-p', name, 'config', 'set', key, value], check=True)
         values = [
-            ('model.provider', settings['provider']),
+            ('model.provider', provider),
             ('model.default', settings['model']),
         ]
         if settings.get('base_url'):
             values.append(('model.base_url', settings['base_url']))
         for key, value in values:
             subprocess.run([hermes, '-p', name, 'config', 'set', key, value], check=True)
-        print(f"Synchronized model routing: {name} -> {settings['provider']} / {settings['model']}")
+        print(f"Synchronized model routing: {name} -> {provider} / {settings['model']}")
 
 
 def sync_configured_profiles(sync_models=True):

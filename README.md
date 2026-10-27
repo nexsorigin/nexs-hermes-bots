@@ -74,7 +74,7 @@ Configure the default profiles with these providers:
 | Profile | Role | Preferred provider |
 | --- | --- | --- |
 | `support` | Support | OpenAI Codex |
-| `qa` | QA | Ollama |
+| `qa` | QA | Ollama through a named Hermes provider route |
 | `developer` | Developer | OpenAI Codex |
 
 The corresponding project configuration is:
@@ -90,7 +90,7 @@ The corresponding project configuration is:
     "qa": {
       "provider": "ollama",
       "model": "qwen3.5:9b",
-      "base_url": "http://localhost:11434"
+      "base_url": "http://localhost:11434/v1"
     },
     "developer": {
       "provider": "openai-codex",
@@ -101,7 +101,7 @@ The corresponding project configuration is:
 }
 ```
 
-The configured QA model must already exist in the Ollama instance at the declared endpoint. Installing Ollama, starting its service, and pulling the selected model are explicit user-managed prerequisites outside this project. Change `models.qa.model` if your environment uses another installed model, then run `./bots sync`. A profile omitted from `models` retains its existing Hermes model configuration. Model entries may only target profiles listed by `watcher.profiles` or `team.profiles`.
+During sync, the project registers `providers.ollama` as a named OpenAI-compatible Hermes route, using the declared `/v1` endpoint and `openai_chat` transport, before assigning QA's model to it. This avoids the interactive model picker's warning for an undefined bare `ollama` or `custom` provider. The configured QA model must already exist in that Ollama instance. Installing Ollama, starting its service, and pulling the selected model are explicit user-managed prerequisites outside this project. Change `models.qa.model` if your environment uses another installed model, then run `./bots sync`. A profile omitted from `models` retains its existing Hermes model configuration. Model entries may only target profiles listed by `watcher.profiles` or `team.profiles`.
 
 1. Make sure the Hermes CLI is available:
 
@@ -182,7 +182,7 @@ The project-root `config.json` contains both independent profile lists:
     "qa": {
       "provider": "ollama",
       "model": "qwen3.5:9b",
-      "base_url": "http://localhost:11434"
+      "base_url": "http://localhost:11434/v1"
     },
     "developer": {
       "provider": "openai-codex",
@@ -196,7 +196,7 @@ The project-root `config.json` contains both independent profile lists:
 - `watcher.profiles` selects which profile fixture directories the watcher monitors. Every listed name must be a real Hermes profile with a synchronized local `profiles/<profile>/soul.md`; `default` cannot be watched. Restart the watcher after changing this list. An empty list starts the watcher without monitoring any profile queues.
 - `watcher.dependencies` declares the Python packages installed into the project-local `.venv` for the watcher. `./bots init` and `./bots start` reinstall them when this list changes.
 - `team.profiles` selects the guarded-console targets and which dispatched profiles receive `TEAM.md`. The shared-instruction selection is consulted on every dispatch. An empty list disables both console targets and shared-instruction injection.
-- `models` maps configured profile names to their Hermes `provider`, `model`, and optional `base_url`. `./bots sync` copies only those routing values into Hermes. It does not install providers, download models, or store credentials. Undeclared configured profiles retain their existing model settings.
+- `models` maps configured profile names to their Hermes `provider`, `model`, and optional `base_url`. `./bots sync` copies only those routing values into Hermes. For `ollama`, the endpoint is required and sync also maintains the named `providers.ollama` route. It does not install providers, download models, or store credentials. Undeclared configured profiles retain their existing model settings.
 
 Initialization, synchronization, cancellation, cleanup, and log selection use the ordered union of both lists, with duplicates removed. The `default` Hermes profile is rejected in either list so project operations cannot accidentally target it.
 

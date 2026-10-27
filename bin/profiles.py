@@ -29,7 +29,7 @@ DEFAULT_CONFIG = {
         'qa': {
             'provider': 'ollama',
             'model': 'qwen3.5:9b',
-            'base_url': 'http://localhost:11434',
+            'base_url': 'http://localhost:11434/v1',
         },
         'developer': {
             'provider': 'openai-codex',
@@ -94,6 +94,8 @@ def load_config():
         if base_url is not None and (not isinstance(base_url, str) or not base_url.strip() or
                                      base_url != base_url.strip()):
             raise RuntimeError(f'config.json models.{name}.base_url must be a nonempty trimmed string')
+        if settings.get('provider') == 'ollama' and not base_url:
+            raise RuntimeError(f'config.json models.{name}.base_url is required for Ollama')
     return config
 
 

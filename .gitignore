@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
-/profiles/*/*
+/profiles/*
 /shared/TEAM.md
 /artifacts/*
 !/artifacts/README.md

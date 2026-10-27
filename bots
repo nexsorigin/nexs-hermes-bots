@@ -65,23 +65,25 @@ print(json.dumps(value))
     done
 }
 
-show_latest_agent_message() {
+export_latest_agent_message() {
     HERMES=$1
     PROFILE=$2
     SESSION_NAME=$3
     EXPORT_FILE=$4
+    MESSAGE_FILE=$5
 
     if ! "$HERMES" -p "$PROFILE" sessions export --format jsonl \
         --title "$SESSION_NAME" - > "$EXPORT_FILE"; then
         return 1
     fi
-    /usr/bin/python3 - "$SESSION_NAME" "$EXPORT_FILE" <<'PYLATEST'
+    /usr/bin/python3 - "$SESSION_NAME" "$EXPORT_FILE" "$MESSAGE_FILE" <<'PYLATEST'
 import json
 import sys
 from pathlib import Path
 
 session_name = sys.argv[1]
 export_file = Path(sys.argv[2])
+message_file = Path(sys.argv[3])
 session = None
 for raw in export_file.read_text(encoding='utf-8').splitlines():
     if not raw.strip():
@@ -98,14 +100,45 @@ for message in reversed((session or {}).get('messages') or []):
         latest = content.rstrip()
         break
 
-print()
 if latest is None:
-    print('Most recent agent message: (none yet)')
-else:
-    print('Most recent agent message:')
-    print(latest)
-print()
+    raise SystemExit(1)
+message_file.write_text(latest, encoding='utf-8')
 PYLATEST
+}
+
+show_latest_agent_message() {
+    HERMES=$1
+    PROFILE=$2
+    SESSION_NAME=$3
+    EXPORT_FILE=$4
+    MESSAGE_FILE=$5
+
+    printf '\nMost recent agent message:'
+    if export_latest_agent_message "$HERMES" "$PROFILE" "$SESSION_NAME" \
+        "$EXPORT_FILE" "$MESSAGE_FILE"; then
+        printf '\n'
+        /bin/cat "$MESSAGE_FILE"
+        printf '\n\n'
+    else
+        printf ' (none yet)\n\n'
+    fi
+}
+
+copy_file_to_clipboard() {
+    CLIPBOARD_FILE=$1
+    if command -v pbcopy >/dev/null 2>&1; then
+        pbcopy < "$CLIPBOARD_FILE"
+    elif command -v wl-copy >/dev/null 2>&1; then
+        wl-copy < "$CLIPBOARD_FILE"
+    elif command -v xclip >/dev/null 2>&1; then
+        xclip -selection clipboard < "$CLIPBOARD_FILE"
+    elif command -v xsel >/dev/null 2>&1; then
+        xsel --clipboard --input < "$CLIPBOARD_FILE"
+    elif command -v clip.exe >/dev/null 2>&1; then
+        clip.exe < "$CLIPBOARD_FILE"
+    else
+        return 1
+    fi
 }
 
 show_help() {
@@ -140,7 +173,8 @@ Commands:
   console    Open a guarded console for profiles under team.profiles (no log pane).
              Adds narrow background-click approval to those profiles, preserving
              existing allowlist entries. Shows the latest agent message after profile
-             selection; Shift+Enter adds a line and Esc clears current input.
+             selection; automatically copies each answer to the clipboard;
+             Shift+Enter, Option+Enter, or a trailing \ adds a line; Esc clears input.
              Blocks concurrent bot CLI tasks.
   uninstall  Permanently uninstall Hermes, all Hermes user data, and related
              LaunchAgents after a yes/no confirmation (default: no).
@@ -559,6 +593,7 @@ console_repl() {
     HELD_LOCK=0
     CURRENT_PROMPT=''
     CURRENT_EXPORT=''
+    CURRENT_REPLY=''
     ORIGINAL_STTY=''
     console_cleanup() {
         if [ -n "$ORIGINAL_STTY" ]; then
@@ -566,6 +601,7 @@ console_repl() {
         fi
         if [ -n "$CURRENT_PROMPT" ]; then rm -f "$CURRENT_PROMPT"; fi
         if [ -n "$CURRENT_EXPORT" ]; then rm -f "$CURRENT_EXPORT"; fi
+        if [ -n "$CURRENT_REPLY" ]; then rm -f "$CURRENT_REPLY"; fi
         if [ "$HELD_LOCK" -eq 1 ]; then
             rm -f "$GUARD_DIR/pid"
             rmdir "$GUARD_DIR" 2>/dev/null || true
@@ -643,14 +679,21 @@ console_repl() {
         echo 'WARNING: Could not create a temporary session export file; latest message unavailable.' >&2
         CURRENT_EXPORT=''
     }
-    if [ -n "$CURRENT_EXPORT" ]; then
-        if ! show_latest_agent_message "$HERMES" "$target" "$SESSION_NAME" "$CURRENT_EXPORT"; then
-            echo 'WARNING: Could not load the most recent agent message.' >&2
-        fi
+    CURRENT_REPLY=$(mktemp "${TMPDIR:-/tmp/}hermes-console-reply.XXXXXXXX") || {
+        echo 'WARNING: Could not create a temporary reply file; latest message unavailable.' >&2
+        CURRENT_REPLY=''
+    }
+    if [ -n "$CURRENT_EXPORT" ] && [ -n "$CURRENT_REPLY" ]; then
+        show_latest_agent_message "$HERMES" "$target" "$SESSION_NAME" \
+            "$CURRENT_EXPORT" "$CURRENT_REPLY" || true
         rm -f "$CURRENT_EXPORT"
+        rm -f "$CURRENT_REPLY"
         CURRENT_EXPORT=''
+        CURRENT_REPLY=''
     fi
+    echo 'Each successful Hermes answer is automatically copied to your clipboard.'
     echo 'Shift+Enter adds a new line; Enter sends. Esc clears the current input.'
+    echo 'If your terminal sends Shift+Enter as Enter, use Option+Enter or end the line with \.'
     echo 'Type exit; or press Ctrl+C to close the console.'
     while :; do
         message=''
@@ -659,32 +702,33 @@ console_repl() {
         while :; do
             printf '%s' "$message_prompt"
             if ! IFS= read -r message_line; then return 0; fi
+            continue_message=0
             case "$message_line" in
                 *"$MULTILINE_MARKER")
                     message_line=${message_line%"$MULTILINE_MARKER"}
-                    if [ "$message_lines" -eq 0 ]; then
-                        message=$message_line
-                    else
-                        message="$message
-$message_line"
-                    fi
-                    message_lines=$((message_lines + 1))
-                    message_prompt='...> '
+                    continue_message=1
                     ;;
-                *)
-                    if [ "$message_lines" -eq 0 ]; then
-                        message=$message_line
-                    else
-                        message="$message
-$message_line"
-                    fi
-                    break
+                *'\')
+                    message_line=${message_line%'\'}
+                    continue_message=1
                     ;;
             esac
+            if [ "$message_lines" -eq 0 ]; then
+                message=$message_line
+            else
+                message="$message
+$message_line"
+            fi
+            if [ "$continue_message" -eq 1 ]; then
+                message_lines=$((message_lines + 1))
+                message_prompt='...> '
+                continue
+            fi
+            break
         done
         case "$message" in
             'exit;') return 0 ;;
-            '') echo 'Empty message; nothing sent.'; continue ;;
+            '') continue ;;
         esac
 
         jobs=$(active_bot_jobs)
@@ -736,6 +780,25 @@ $message_line"
         rmdir "$GUARD_DIR" 2>/dev/null || true
         HELD_LOCK=0
         CURRENT_PROMPT=''
+        if [ "$result" -eq 0 ]; then
+            CURRENT_EXPORT=$(mktemp "${TMPDIR:-/tmp/}hermes-console-session.XXXXXXXX") || CURRENT_EXPORT=''
+            CURRENT_REPLY=$(mktemp "${TMPDIR:-/tmp/}hermes-console-reply.XXXXXXXX") || CURRENT_REPLY=''
+            if [ -n "$CURRENT_EXPORT" ] && [ -n "$CURRENT_REPLY" ] && \
+               export_latest_agent_message "$HERMES" "$target" "$SESSION_NAME" \
+                   "$CURRENT_EXPORT" "$CURRENT_REPLY"; then
+                if copy_file_to_clipboard "$CURRENT_REPLY"; then
+                    echo 'Answer copied to clipboard.'
+                else
+                    echo 'WARNING: Answer was not copied; no supported clipboard command was found.' >&2
+                fi
+            else
+                echo 'WARNING: Could not retrieve the completed answer for clipboard copying.' >&2
+            fi
+            if [ -n "$CURRENT_EXPORT" ]; then rm -f "$CURRENT_EXPORT"; fi
+            if [ -n "$CURRENT_REPLY" ]; then rm -f "$CURRENT_REPLY"; fi
+            CURRENT_EXPORT=''
+            CURRENT_REPLY=''
+        fi
         echo "Hermes turn exited with status $result; session '$SESSION_NAME' remains selected."
     done
 }
@@ -855,11 +918,17 @@ case "${1:-}" in
         # Modified-key reporting lets tmux distinguish Shift+Enter from Enter.
         # Shift+Enter sends an invisible continuation marker plus Enter; the REPL
         # consumes the marker and keeps collecting lines until a plain Enter.
-        tmux set-option -s extended-keys on
+        tmux set-option -s extended-keys always
         tmux bind-key -n S-Enter \
             if-shell -F "#{==:#{session_name},$SESSION}" \
             'send-keys C-^ Enter' \
             'send-keys S-Enter'
+        # Terminals that cannot report Shift+Enter (e.g. Terminal.app) can map it
+        # to Escape+Return, or the user can press Option+Enter with Option as Meta.
+        tmux bind-key -n M-Enter \
+            if-shell -F "#{==:#{session_name},$SESSION}" \
+            'send-keys C-^ Enter' \
+            'send-keys M-Enter'
         if command -v pbcopy >/dev/null 2>&1; then
             for COPY_TABLE in copy-mode copy-mode-vi; do
                 tmux bind-key -T "$COPY_TABLE" MouseDragEnd1Pane \

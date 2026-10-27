@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop Hermes File Watcher and Hermes Gateway on macOS.
+# Stop the Nexs Hermes Bots watcher and Hermes Gateway on macOS.
 # Does not remove LaunchAgent files, delete logs, or quit Hermes Desktop.
 set -u
 
@@ -11,7 +11,7 @@ printf '%s\n' 'Stopping Hermes background services...'
 
 # Unload service first, to prevent launchd from restarting the watcher.
 if launchctl print "$USER_DOMAIN/$WATCHER_LABEL" >/dev/null 2>&1; then
-  echo 'Stopping Hermes File Watcher LaunchAgent...'
+  echo 'Stopping Nexs Hermes Bots watcher LaunchAgent...'
   if ! launchctl bootout "$USER_DOMAIN/$WATCHER_LABEL"; then
     echo 'WARNING: Could not unload watcher LaunchAgent.' >&2
   fi

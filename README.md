@@ -6,17 +6,14 @@ A reusable, local Hermes CLI automation scaffold. **The current default team con
 
 ```text
 <clone-directory>/
-├── bots                         # Run with: sh bots <command>
+├── bots                         # Run with: ./bots <command>
 ├── config.json                  # Watcher and TEAM.md profile lists
 ├── bin/                         # Executable Python and service scripts
 │   ├── profiles.py              # Config loading and Hermes profile discovery
 │   ├── sync.py                  # Mirror Hermes profiles into local folders
 │   ├── setup.py                 # Initialization and SOUL.md importer
 │   ├── watcher.py               # Dispatches incoming files to Hermes
-│   ├── run.sh
-│   ├── install.sh
-│   ├── stop.sh
-│   └── uninstall.sh
+│   └── …                         # Internal service launchers
 ├── profiles/                    # Editable handoff-only SOUL templates
 │   ├── support/
 │   │   ├── soul.md
@@ -35,40 +32,60 @@ A reusable, local Hermes CLI automation scaffold. **The current default team con
 └── submission_history.jsonl
 ```
 
-**Folder rules for custom teams:** The repository clone directory is the project root. Runtime fixtures are stored under that project root at `fixtures/`; they are not stored in the user's home directory unless the repository itself was cloned there. Use `profiles/<profile>/soul.md` for a profile's handoff instructions, `fixtures/<profile>/` for its incoming queue, `shared/TEAM.md` for shared rules, and the project-root `config.json` for both profile lists. Profile names must match the real Hermes CLI profile names. Keep the SOUL template filenames as lowercase `soul.md` inside this project; `sh bots init` imports their contents into the actual Hermes **`SOUL.md`** files at `~/.hermes/profiles/<profile>/SOUL.md` (or `$HERMES_HOME/profiles/...`). Hermes profile discovery uses `hermes profile list`.
+**Folder rules for custom teams:** The repository clone directory is the project root. Runtime fixtures are stored under that project root at `fixtures/`; they are not stored in the user's home directory unless the repository itself was cloned there. Use `profiles/<profile>/soul.md` for a profile's handoff instructions, `fixtures/<profile>/` for its incoming queue, `shared/TEAM.md` for shared rules, and the project-root `config.json` for both profile lists. Profile names must match the real Hermes CLI profile names. Keep the SOUL template filenames as lowercase `soul.md` inside this project; `./bots init` imports their contents into the actual Hermes **`SOUL.md`** files at `~/.hermes/profiles/<profile>/SOUL.md` (or `$HERMES_HOME/profiles/...`). Hermes profile discovery uses `hermes profile list`.
 
 Applications, plugins, and other work that received an explicit QA PASS are copied into `artifacts/`. There is no mandatory internal directory structure or manifest file; use clear, collision-free names and retain the matching QA evidence in the ticket workflow. Runtime artifacts are ignored by Git while `artifacts/README.md` remains tracked. A non-PASS verdict must never be promoted into this directory.
 
-To customize the team, edit the profile lists in `config.json` and create matching `profiles/<profile>/soul.md` templates. `sh bots init` creates missing configured Hermes profiles and fixture directories; `sh bots sync` synchronizes only configured profiles. The watcher, guarded console, cancellation, cleanup, and log commands all derive their profile sets from the same configuration. The original handoff validation still has special behavior for Support and QA, so changing that workflow may require adjusting the role-specific checks in `bin/watcher.py`. Update filenames inside the handoff templates to match your team's workflow.
+To customize the team, edit the profile lists in `config.json` and create matching `profiles/<profile>/soul.md` templates. `./bots init` creates missing configured Hermes profiles and fixture directories; `./bots sync` synchronizes only configured profiles. The watcher, guarded console, cancellation, cleanup, and log commands all derive their profile sets from the same configuration. The original handoff validation still has special behavior for Support and QA, so changing that workflow may require adjusting the role-specific checks in `bin/watcher.py`. Update filenames inside the handoff templates to match your team's workflow.
 
 ## Installation and migration
 
-1. Back up your old `~/hermes-file-watcher/` installation (if present), Hermes profile `SOUL.md` files, fixtures, and logs. Stop any old running services from **the old directory** using `sh bots stop` before moving files.
+1. Back up your old `~/nexs-hermes-bots/` installation (if present), Hermes profile `SOUL.md` files, fixtures, and logs. Stop any old running services from **the old directory** using `./bots stop` before moving files.
 2. Clone or place the package in any directory you choose. That clone directory becomes the project root; fixtures, logs, and submission history stay inside it. If upgrading, migrate any fixtures, shared instructions and history you want to keep. Do not simply overwrite your customized `TEAM.md` or `soul.md` templates.
 3. Run:
 
    ```bash
    cd /path/to/nexs-hermes-bots
-   sh bots init
+   ./bots init
    ```
 
    `init` checks that the watcher is stopped, installs the official Hermes CLI if missing, creates `.venv`, installs dependencies from `config.json` under `watcher.dependencies`, checks `hermes profile list`, creates profiles selected in `config.json`, and imports `profiles/<profile>/soul.md` into their actual Hermes `SOUL.md`. When replacing existing profile instructions, it makes a timestamped backup. If the upstream Hermes installer is invoked it may perform its own setup or prompts.
-4. Edit `shared/TEAM.md` for shared policies, configure its recipients and watched profiles in `config.json`, and edit the three `profiles/<profile>/soul.md` templates for role-specific handoffs. Rerun `sh bots init` after changing the templates to import their updated contents (backing up existing SOUL files).
-5. When ready, start services **separately** with `sh bots start`. Check using `sh bots status`.
+4. Edit `shared/TEAM.md` for shared policies, configure its recipients and watched profiles in `config.json`, and edit the three `profiles/<profile>/soul.md` templates for role-specific handoffs. Rerun `./bots init` after changing the templates to import their updated contents (backing up existing SOUL files).
+5. When ready, start services **separately** with `./bots start`. Check using `./bots status`.
 
-**`sh bots init` does not explicitly start the gateway, watcher, LaunchAgent, or any bot.** The upstream Hermes installer is a third-party script and may have its own setup behavior. Profile creation and authorization may also require interaction. Manual CLI or Desktop conversations do not automatically receive the `TEAM.md` injection; it is applied by the file watcher to dispatched tasks.
+**`./bots init` does not explicitly start the gateway, watcher, LaunchAgent, or any bot.** The upstream Hermes installer is a third-party script and may have its own setup behavior. Profile creation and authorization may also require interaction. Manual CLI or Desktop conversations do not automatically receive the `TEAM.md` injection; it is applied by the file watcher to dispatched tasks.
 
-`sh bots start` also verifies the watcher environment and creates it if needed before starting the Gateway. This makes a fresh clone self-contained; no manual virtual-environment setup is required. On every watcher start, existing handoff Markdown files under configured watcher profile queues are scanned as recovery candidates. Files already recorded with the same path and content hash in `submission_history.jsonl` are skipped, while unseen files created during watcher downtime are dispatched. As its final step, `sh bots start` runs `sh bots logs` to follow the watcher and profile logs; press Ctrl+C to stop following (the services keep running).
+`./bots start` also verifies the watcher environment and creates it if needed before starting the Gateway. This makes a fresh clone self-contained; no manual virtual-environment setup is required. On every watcher start, existing handoff Markdown files under configured watcher profile queues are scanned as recovery candidates. Files already recorded with the same path and content hash in `submission_history.jsonl` are skipped, while unseen files created during watcher downtime are dispatched. As its final step, `./bots start` runs `./bots logs` to follow the watcher and profile logs; press Ctrl+C to stop following (the services keep running).
 
-`sh bots console` first ensures every profile in `team.profiles` has the narrow `cua:click:background` entry in its Hermes `command_allowlist`, preserving all existing entries. This lets the one-shot console turns perform background clicks even though they cannot pause for an interactive approval; foreground/focus-changing clicks and other guarded actions remain gated. The console's tmux session has mouse mode enabled so the wheel scrolls through console history instead of inserting arrow-key escape sequences at the prompt. Dragging across a Hermes response copies the selection directly to the clipboard, and every successful Hermes answer is also copied automatically after the turn finishes. Automatic copying supports `pbcopy`, `wl-copy`, `xclip`, `xsel`, and `clip.exe`. On macOS, the console verifies that `pbcopy` actually updated the GUI pasteboard and uses AppleScript as a fallback when it did not; it reports success only after the copied text is verified. This setting applies only to the guarded-console tmux session. The console then displays a numbered list containing only profiles from `team.profiles`. Select one by number or exact name; the console displays that named session's most recent agent message, then sends every new message to the same persistent session. After profile selection, Shift+Enter adds a new line and displays a continuation prompt when the terminal reports it as a modified key, while a plain Enter submits the complete message. Terminals that send Shift+Enter as an ordinary Enter cannot be distinguished by tmux; use Option+Enter or end the line with `\` as the portable continuation fallback. Empty submissions are ignored silently. Press Esc to clear the current input without leaving that session. The same session is resumed across turns and future console launches. Type `exit;` at the profile prompt or press Ctrl+C to leave; the console does not return to profile selection after each turn. In macOS Terminal.app, open Settings → Profiles → Keyboard and either enable “Use Option as Meta key” for Option+Enter, or map Shift+Return to send Escape followed by Return so tmux receives `M-Enter`.
+`./bots console` first ensures every profile in `team.profiles` has the narrow `cua:click:background` entry in its Hermes `command_allowlist`, preserving all existing entries. This lets the one-shot console turns perform background clicks even though they cannot pause for an interactive approval; foreground/focus-changing clicks and other guarded actions remain gated. The console's tmux session has mouse mode enabled so the wheel scrolls through console history instead of inserting arrow-key escape sequences at the prompt. Dragging across a Hermes response copies the selection directly to the clipboard, and every successful Hermes answer is also copied automatically after the turn finishes. Automatic copying supports `pbcopy`, `wl-copy`, `xclip`, `xsel`, and `clip.exe`. On macOS, the console verifies that `pbcopy` actually updated the GUI pasteboard and uses AppleScript as a fallback when it did not; it reports success only after the copied text is verified. This setting applies only to the guarded-console tmux session. The console then displays a numbered list containing only profiles from `team.profiles`. Select one by number or exact name; the console displays that named session's most recent agent message, then sends every new message to the same persistent session. After profile selection, Shift+Enter adds a new line and displays a continuation prompt when the terminal reports it as a modified key, while a plain Enter submits the complete message. Terminals that send Shift+Enter as an ordinary Enter cannot be distinguished by tmux; use Option+Enter or end the line with `\` as the portable continuation fallback. Empty submissions are ignored silently. Press Esc to clear the current input without leaving that session. The same session is resumed across turns and future console launches. Type `exit;` at the profile prompt or press Ctrl+C to leave; the console does not return to profile selection after each turn. In macOS Terminal.app, open Settings → Profiles → Keyboard and either enable “Use Option as Meta key” for Option+Enter, or map Shift+Return to send Escape followed by Return so tmux receives `M-Enter`.
 
 If your previous installation used the LaunchAgent `local.hermes.file-watcher`, stop and unload it before switching directories: the new install uses the same generic label and should not be competing with an old job pointing to the original path. The scripts do not remove the old installation automatically.
 
-Run `sh bots --help` for a short setup checklist, including model authentication and verification.
+Run `./bots --help` for a short setup checklist, including model authentication and verification.
 
 ## Connect an AI model (LLM) to Hermes
 
-Hermes needs an **inference provider** to respond to prompts. Set this up **after** `sh bots init` and **before** starting the bots. This step is interactive and intentionally **not** performed by `sh bots init`: each user chooses their own model, provider, account, and billing arrangements.
+Hermes needs an **inference provider** to respond to prompts. Set this up **after** `./bots init` and **before** starting the bots. This step is interactive and intentionally **not** performed by `./bots init`: each user chooses their own model, provider, account, and billing arrangements.
+
+### Preferred default-team setup
+
+Configure the default profiles with these providers:
+
+| Profile | Role | Preferred provider |
+| --- | --- | --- |
+| `support` | Support | OpenAI Codex |
+| `qa` | QA | Ollama |
+| `developer` | Developer | OpenAI Codex |
+
+Run the model selector for each profile and choose the provider shown above:
+
+```bash
+hermes -p support model
+hermes -p qa model
+hermes -p developer model
+```
+
+For QA, select the available Ollama or local/custom endpoint option and supply the Ollama endpoint and model used by your environment. These are preferred defaults for this team, not restrictions on custom teams.
 
 1. Make sure the Hermes CLI is available:
 
@@ -114,17 +131,17 @@ Hermes needs an **inference provider** to respond to prompts. Set this up **afte
 
    ```bash
    cd /path/to/nexs-hermes-bots
-   sh bots start
-   sh bots status
+   ./bots start
+   ./bots status
    ```
 
-**Important:** Creating configured profiles does not by itself connect an LLM. The project's `sh bots sync` command synchronizes profile SOUL instructions, **not** LLM credentials. Depending on the Hermes configuration, profiles may use the installation's selected provider/model; check each profile's effective configuration if it behaves differently. Authentication, subscription eligibility, API quotas, and charges depend on the selected provider.
+**Important:** Creating configured profiles does not by itself connect an LLM. The project's `./bots sync` command synchronizes profile SOUL instructions, **not** LLM credentials. Depending on the Hermes configuration, profiles may use the installation's selected provider/model; check each profile's effective configuration if it behaves differently. Authentication, subscription eligibility, API quotas, and charges depend on the selected provider.
 
 Official references: [Hermes Quickstart](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart), [LLM and Model Providers](https://hermes-agent.nousresearch.com/docs/integrations/providers), and [Credential Management](https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools).
 
 ## Synchronization and watcher configuration
 
-Run `sh bots sync` to synchronize the union of `watcher.profiles` and `team.profiles`. For each configured profile, local `profiles/<profile>/soul.md` is authoritative: if it exists, sync publishes its contents to the Hermes profile `SOUL.md`, backing up the previous Hermes file as `SOUL.before-sync-<timestamp>.md` whenever content differs. If a configured profile has no local `soul.md`, sync first imports its Hermes `SOUL.md` (or creates a local stub), then synchronizes it. Each profile has `meta.json` updated with `name`, `source`, and `synced_at`; custom metadata fields are preserved. `sync` does not create Hermes profiles or start services; use `sh bots init` when a configured Hermes profile does not exist yet. **Review local SOUL edits before running sync, because they replace the active Hermes instructions.**
+Run `./bots sync` to synchronize the union of `watcher.profiles` and `team.profiles`. For each configured profile, local `profiles/<profile>/soul.md` is authoritative: if it exists, sync publishes its contents to the Hermes profile `SOUL.md`, backing up the previous Hermes file as `SOUL.before-sync-<timestamp>.md` whenever content differs. If a configured profile has no local `soul.md`, sync first imports its Hermes `SOUL.md` (or creates a local stub), then synchronizes it. Each profile has `meta.json` updated with `name`, `source`, and `synced_at`; custom metadata fields are preserved. `sync` does not create Hermes profiles or start services; use `./bots init` when a configured Hermes profile does not exist yet. **Review local SOUL edits before running sync, because they replace the active Hermes instructions.**
 
 The project-root `config.json` contains both independent profile lists:
 
@@ -141,7 +158,7 @@ The project-root `config.json` contains both independent profile lists:
 ```
 
 - `watcher.profiles` selects which profile fixture directories the watcher monitors. Every listed name must be a real Hermes profile with a synchronized local `profiles/<profile>/soul.md`; `default` cannot be watched. Restart the watcher after changing this list. An empty list starts the watcher without monitoring any profile queues.
-- `watcher.dependencies` declares the Python packages installed into the project-local `.venv` for the watcher. `sh bots init` and `sh bots start` reinstall them when this list changes.
+- `watcher.dependencies` declares the Python packages installed into the project-local `.venv` for the watcher. `./bots init` and `./bots start` reinstall them when this list changes.
 - `team.profiles` selects the guarded-console targets and which dispatched profiles receive `TEAM.md`. The shared-instruction selection is consulted on every dispatch. An empty list disables both console targets and shared-instruction injection.
 
 Initialization, synchronization, cancellation, cleanup, and log selection use the ordered union of both lists, with duplicates removed. The `default` Hermes profile is rejected in either list so project operations cannot accidentally target it.
@@ -154,6 +171,6 @@ No project-specific application, platform, or local environment is assumed. Live
 
 ## Full uninstall
 
-`sh bots uninstall` is destructive and requires a `[y/N]` confirmation in an interactive Terminal; no is the default. It stops the project watcher and Hermes Gateway, removes their user LaunchAgents, and runs the official `hermes uninstall --full --yes` command. A successful full uninstall removes Hermes Agent, Hermes Desktop when owned by the Hermes installer, and Hermes user data including profiles, sessions, chats, credentials, configuration, downloaded tools, plugins, caches, and logs.
+`./bots uninstall` is destructive and requires a `[y/N]` confirmation in an interactive Terminal; no is the default. It stops the project watcher and Hermes Gateway, removes their user LaunchAgents, and runs the official `hermes uninstall --full --yes` command. A successful full uninstall removes Hermes Agent, Hermes Desktop when owned by the Hermes installer, and Hermes user data including profiles, sessions, chats, credentials, configuration, downloaded tools, plugins, caches, and logs.
 
 The repository checkout and its local fixtures, logs, and submission history are preserved. If the Hermes CLI cannot be found, or the official full uninstall leaves a primary installation path behind, the command exits with an error instead of deleting unverified locations.

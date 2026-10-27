@@ -5,8 +5,9 @@ from pathlib import Path
 import json
 import os
 import shutil
+import subprocess
 import sys
-from profiles import configured_profiles, discover_profiles
+from profiles import configured_profiles, discover_profiles, load_config
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,7 +27,29 @@ def atomic_write(path, content):
         temporary.unlink(missing_ok=True)
 
 
-def sync_configured_profiles():
+def sync_configured_models(names):
+    """Copy declared routing values into Hermes; never install or download models."""
+    hermes = os.environ.get('HERMES_BIN') or shutil.which('hermes')
+    if not hermes:
+        raise RuntimeError('Hermes CLI not found in PATH')
+    models = load_config().get('models', {})
+    for name in names:
+        settings = models.get(name)
+        if not settings:
+            print(f'Model unchanged (not declared in config.json): {name}')
+            continue
+        values = [
+            ('model.provider', settings['provider']),
+            ('model.default', settings['model']),
+        ]
+        if settings.get('base_url'):
+            values.append(('model.base_url', settings['base_url']))
+        for key, value in values:
+            subprocess.run([hermes, '-p', name, 'config', 'set', key, value], check=True)
+        print(f"Synchronized model routing: {name} -> {settings['provider']} / {settings['model']}")
+
+
+def sync_configured_profiles(sync_models=True):
     directory = ROOT / 'profiles'
     assert_regular_path(directory)
     directory.mkdir(exist_ok=True)
@@ -83,11 +106,13 @@ def sync_configured_profiles():
                      'synced_at': datetime.now(timezone.utc).isoformat()})
         atomic_write(meta, json.dumps(data, indent=2, ensure_ascii=False) + '\n')
         print(f'Synced metadata: {meta}')
+    if sync_models:
+        sync_configured_models(names)
     print(f'Synchronized {len(names)} configured Hermes profile(s).')
 
 
 if __name__ == '__main__':
     try:
         sync_configured_profiles()
-    except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
+    except (OSError, RuntimeError, ValueError, UnicodeError, subprocess.CalledProcessError) as exc:
         sys.exit(f'ERROR: {exc}')

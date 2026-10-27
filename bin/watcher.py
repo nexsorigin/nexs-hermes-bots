@@ -36,7 +36,7 @@ def load_profiles():
                       if not (APP_DIR / 'profiles' / name / 'soul.md').is_file()]
     if unsynchronized:
         raise RuntimeError('Configured watcher profiles are not synchronized locally: ' +
-                           ', '.join(unsynchronized) + ' (run sh bots sync)')
+                           ', '.join(unsynchronized) + ' (run ./bots sync)')
     return {name: name for name in names}
 
 

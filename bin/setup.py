@@ -65,7 +65,9 @@ def main():
     else:
         print(f'Preserved: {team}')
     # Synchronize only profiles selected in config.json before importing templates.
-    sync_configured_profiles()
+    # Initialization synchronizes instructions only. Model routing is handled by
+    # the explicit sync command and never installs a provider or downloads a model.
+    sync_configured_profiles(sync_models=False)
     # Team templates live in profiles/<profile>/soul.md.
     # Profile paths are resolved from documented Hermes home layout; refuse if absent.
     hermes_home = Path(os.environ.get('HERMES_HOME', str(Path.home()/'.hermes'))).expanduser()
@@ -91,7 +93,7 @@ def main():
         print(f'Imported handoff-only SOUL.md: {soul}')
     print('Profiles initialized: ' + (', '.join(profiles) if profiles else '(none configured)'))
     print('Other Hermes profiles and their SOUL.md files were not modified.')
-    print('No services were started. Run sh bots start separately when ready.')
+    print('No services were started. Run ./bots start separately when ready.')
 
 if __name__ == '__main__':
     try:

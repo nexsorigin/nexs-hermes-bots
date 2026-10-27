@@ -104,6 +104,6 @@ export PYTHONUNBUFFERED=1
 printf '[%s] Hermes ready; starting watcher LIVE (new events plus unseen existing handoffs).\n' "$(date)"
 
 # launchd already captures watcher stdout/stderr; do not duplicate bot logs
-# by tailing them into watcher-service.log. Use `sh bots logs` interactively.
+# by tailing them into watcher-service.log. Use `./bots logs` interactively.
 mkdir -p "$WATCHER_DIR/logs"
 exec "$WATCHER_DIR/.venv/bin/python" -u "$SCRIPT_DIR/watcher.py" --live --scan-existing

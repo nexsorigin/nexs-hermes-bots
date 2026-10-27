@@ -49,7 +49,7 @@ To customize the team, edit the profile lists in `config.json` and create matchi
    ./bots init
    ```
 
-   `init` checks that the watcher is stopped, installs the official Hermes CLI if missing, creates `.venv`, installs dependencies from `config.json` under `watcher.dependencies`, checks `hermes profile list`, creates profiles selected in `config.json`, and imports `profiles/<profile>/soul.md` into their actual Hermes `SOUL.md`. When replacing existing profile instructions, it makes a timestamped backup. If the upstream Hermes installer is invoked it may perform its own setup or prompts.
+   `init` checks that the watcher is stopped, installs the official Hermes CLI if missing, creates `.venv`, installs dependencies from `config.json` under `watcher.dependencies`, checks `hermes profile list`, creates profiles selected in `config.json`, and imports `profiles/<profile>/soul.md` into their actual Hermes `SOUL.md`. It does not install a model provider, download a model, or apply model routing. When replacing existing profile instructions, it makes a timestamped backup. If the upstream Hermes installer is invoked it may perform its own setup or prompts.
 4. Edit `shared/TEAM.md` for shared policies, configure its recipients and watched profiles in `config.json`, and edit the three `profiles/<profile>/soul.md` templates for role-specific handoffs. Rerun `./bots init` after changing the templates to import their updated contents (backing up existing SOUL files).
 5. When ready, start services **separately** with `./bots start`. Check using `./bots status`.
 
@@ -65,7 +65,7 @@ Run `./bots --help` for a short setup checklist, including model authentication 
 
 ## Connect an AI model (LLM) to Hermes
 
-Hermes needs an **inference provider** to respond to prompts. Set this up **after** `./bots init` and **before** starting the bots. This step is interactive and intentionally **not** performed by `./bots init`: each user chooses their own model, provider, account, and billing arrangements.
+Hermes needs an **inference provider** to respond to prompts. The project declares each profile's provider and model routing in `config.json`; `./bots sync` copies those declarations into Hermes's profile-scoped configuration. This synchronization only writes routing values. It never installs Homebrew packages or model providers, starts Ollama, pulls model files, or authenticates an account.
 
 ### Preferred default-team setup
 
@@ -77,15 +77,31 @@ Configure the default profiles with these providers:
 | `qa` | QA | Ollama |
 | `developer` | Developer | OpenAI Codex |
 
-Run the model selector for each profile and choose the provider shown above:
+The corresponding project configuration is:
 
-```bash
-hermes -p support model
-hermes -p qa model
-hermes -p developer model
+```json
+{
+  "models": {
+    "support": {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "base_url": "https://chatgpt.com/backend-api/codex"
+    },
+    "qa": {
+      "provider": "ollama",
+      "model": "qwen3.5:9b",
+      "base_url": "http://localhost:11434"
+    },
+    "developer": {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "base_url": "https://chatgpt.com/backend-api/codex"
+    }
+  }
+}
 ```
 
-For QA, select the available Ollama or local/custom endpoint option and supply the Ollama endpoint and model used by your environment. These are preferred defaults for this team, not restrictions on custom teams.
+The configured QA model must already exist in the Ollama instance at the declared endpoint. Installing Ollama, starting its service, and pulling the selected model are explicit user-managed prerequisites outside this project. Change `models.qa.model` if your environment uses another installed model, then run `./bots sync`. A profile omitted from `models` retains its existing Hermes model configuration. Model entries may only target profiles listed by `watcher.profiles` or `team.profiles`.
 
 1. Make sure the Hermes CLI is available:
 
@@ -93,13 +109,16 @@ For QA, select the available Ollama or local/custom endpoint option and supply t
    hermes version
    ```
 
-2. Open Hermes's interactive model/provider selector:
+2. Complete provider authentication where required. For the default Codex profiles, run the model flow for each profile and complete the device-code login:
 
    ```bash
-   hermes model
+   hermes -p support model
+   hermes -p developer model
    ```
 
-3. Choose a provider and complete its authentication steps. Common choices include:
+   QA uses the configured local Ollama endpoint and normally needs no credentials. Ensure Ollama is running and the configured model is installed before starting agent work.
+
+3. Other supported provider choices include:
 
    | Provider | Connection method |
    | --- | --- |
@@ -135,7 +154,7 @@ For QA, select the available Ollama or local/custom endpoint option and supply t
    ./bots status
    ```
 
-**Important:** Creating configured profiles does not by itself connect an LLM. The project's `./bots sync` command synchronizes profile SOUL instructions, **not** LLM credentials. Depending on the Hermes configuration, profiles may use the installation's selected provider/model; check each profile's effective configuration if it behaves differently. Authentication, subscription eligibility, API quotas, and charges depend on the selected provider.
+**Important:** Model declarations contain routing settings only, never credentials or installation instructions. The project's `./bots sync` command synchronizes both profile SOUL instructions and declared model routing. Authentication, provider installation, model acquisition, subscription eligibility, API quotas, and charges remain the user's responsibility.
 
 Official references: [Hermes Quickstart](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart), [LLM and Model Providers](https://hermes-agent.nousresearch.com/docs/integrations/providers), and [Credential Management](https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools).
 
@@ -153,6 +172,23 @@ The project-root `config.json` contains both independent profile lists:
   },
   "team": {
     "profiles": ["support", "developer", "qa"]
+  },
+  "models": {
+    "support": {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "base_url": "https://chatgpt.com/backend-api/codex"
+    },
+    "qa": {
+      "provider": "ollama",
+      "model": "qwen3.5:9b",
+      "base_url": "http://localhost:11434"
+    },
+    "developer": {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol",
+      "base_url": "https://chatgpt.com/backend-api/codex"
+    }
   }
 }
 ```
@@ -160,6 +196,7 @@ The project-root `config.json` contains both independent profile lists:
 - `watcher.profiles` selects which profile fixture directories the watcher monitors. Every listed name must be a real Hermes profile with a synchronized local `profiles/<profile>/soul.md`; `default` cannot be watched. Restart the watcher after changing this list. An empty list starts the watcher without monitoring any profile queues.
 - `watcher.dependencies` declares the Python packages installed into the project-local `.venv` for the watcher. `./bots init` and `./bots start` reinstall them when this list changes.
 - `team.profiles` selects the guarded-console targets and which dispatched profiles receive `TEAM.md`. The shared-instruction selection is consulted on every dispatch. An empty list disables both console targets and shared-instruction injection.
+- `models` maps configured profile names to their Hermes `provider`, `model`, and optional `base_url`. `./bots sync` copies only those routing values into Hermes. It does not install providers, download models, or store credentials. Undeclared configured profiles retain their existing model settings.
 
 Initialization, synchronization, cancellation, cleanup, and log selection use the ordered union of both lists, with duplicates removed. The `default` Hermes profile is rejected in either list so project operations cannot accidentally target it.
 

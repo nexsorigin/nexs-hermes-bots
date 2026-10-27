@@ -1,6 +1,6 @@
 #!/bin/sh
 # Manage the Hermes Gateway and File Watcher on macOS.
-# Usage: sh bots {init|start|stop|cancel|clean|status|logs|console|uninstall|help}
+# Usage: ./bots {init|start|stop|cancel|clean|status|logs|console|uninstall|help}
 set -eu
 
 LABEL='local.hermes.file-watcher'
@@ -167,17 +167,18 @@ Hermes Bot Manager
 Workflow: Support -> Developer -> QA <-> Developer -> Support.
 The default setup uses three dedicated Hermes profiles.
 
-Usage: sh bots <command>  (run from the repository clone directory)
+Usage: ./bots <command>  (run from the repository clone directory)
 
 Commands:
   init       Install Hermes CLI if missing, then create/verify the profiles selected
              in config.json, their fixture folders, handoff-only SOUL.md files,
-             TEAM.md, and the watcher Python environment. Unconfigured Hermes
-             profiles remain untouched.
+             TEAM.md, and the watcher Python environment.
+             Unconfigured Hermes profiles remain untouched.
              Initialization only: does NOT start the Gateway, watcher,
              LaunchAgent, or any Hermes bot.
-  sync       Sync configured profiles with profiles/<profile>/soul.md (local wins);
-             back up changed Hermes SOUL.md.
+  sync       Sync configured profiles with profiles/<profile>/soul.md (local wins),
+             model routing from config.json, and back up changed Hermes SOUL.md.
+             Never installs a provider or downloads a model.
   start      Start Hermes Gateway and the Hermes watcher LaunchAgent.
              Starts the watcher only once and waits for gateway readiness.
   stop       Stop the Hermes watcher and Hermes Gateway.
@@ -202,17 +203,19 @@ Commands:
   help       Show this help message.
 
 Connect an LLM (required before running agent tasks):
-  1. sh bots init          Install Hermes CLI if needed and prepare profiles.
-  2. hermes model          Select a provider/model and complete its setup.
-                            For ChatGPT, choose the Codex subscription login;
-                            API-key and local/custom providers are also supported.
-  3. hermes auth list      Inspect configured authentication (where supported).
-  4. hermes               Start a test chat to confirm the model responds.
-  5. sh bots sync          Publish local profiles/<profile>/soul.md to Hermes.
-  6. sh bots start         Start services only when configuration is ready.
+  1. ./bots init           Install Hermes CLI and prepare profiles.
+  2. Install/start model providers and obtain models outside this project.
+  3. hermes -p PROFILE model
+                            Authenticate providers that require an interactive login.
+  4. hermes auth list      Inspect configured authentication (where supported).
+  5. ./bots sync           Publish SOUL instructions and model routing to Hermes.
+  6. hermes               Start a test chat to confirm the model responds.
+  7. ./bots start          Start services only when configuration is ready.
 
 Notes:
-  - LLM authentication is managed by Hermes, not by sh bots init or sync.
+  - LLM authentication is managed by Hermes, not by ./bots init or sync.
+  - config.json model declarations contain routing settings, never credentials.
+  - This project never installs model providers or downloads model files.
   - Some providers require API keys, subscriptions, or separate billing.
   - Configure config.json to choose which profiles receive TEAM.md
     and which synchronized profile fixture queues the watcher monitors.
@@ -306,7 +309,7 @@ EOF
 init_fixtures() {
     if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || \
        pgrep -f '[w]atcher.py' >/dev/null 2>&1; then
-        echo 'BLOCKED: stop the watcher before initialization (sh bots stop).' >&2
+        echo 'BLOCKED: stop the watcher before initialization (./bots stop).' >&2
         return 1
     fi
     install_hermes_if_missing || return 1
@@ -531,7 +534,7 @@ clean_fixtures() {
        pgrep -f '[w]atcher.py' >/dev/null 2>&1 || \
        [ -n "$(cli_tasks)" ]; then
         echo 'BLOCKED: watcher service or Hermes work appears active.' >&2
-        echo 'Finish/cancel active work, then stop services with: sh bots stop' >&2
+        echo 'Finish/cancel active work, then stop services with: ./bots stop' >&2
         return 1
     fi
 
@@ -911,7 +914,7 @@ case "${1:-}" in
             exit 1
         fi
         if [ ! -t 0 ] || [ ! -t 1 ]; then
-            echo 'ERROR: Run sh bots console from an interactive Terminal.' >&2
+            echo 'ERROR: Run ./bots console from an interactive Terminal.' >&2
             exit 1
         fi
         HERMES=$(hermes_bin)

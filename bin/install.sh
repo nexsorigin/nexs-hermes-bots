@@ -15,7 +15,7 @@ if [[ ! -f "$LAUNCHER" ]]; then
   exit 1
 fi
 if [[ ! -f "$SCRIPT_DIR/profiles.py" || ! -s "$DIR/shared/TEAM.md" || ! -s "$DIR/config.json" ]]; then
-  echo "ERROR: Shared team setup missing. Run 'sh bots init' first." >&2
+  echo "ERROR: Shared team setup missing. Run './bots init' first." >&2
   exit 1
 fi
 if ! /usr/bin/python3 "$SCRIPT_DIR/profiles.py" --configured all >/dev/null; then

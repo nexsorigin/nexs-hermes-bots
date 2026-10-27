@@ -20,12 +20,29 @@ DEFAULT_CONFIG = {
         'dependencies': ['watchdog>=4,<7'],
     },
     'team': {'profiles': DEFAULT_PROFILES},
+    'models': {
+        'support': {
+            'provider': 'openai-codex',
+            'model': 'gpt-5.6-sol',
+            'base_url': 'https://chatgpt.com/backend-api/codex',
+        },
+        'qa': {
+            'provider': 'ollama',
+            'model': 'qwen3.5:9b',
+            'base_url': 'http://localhost:11434',
+        },
+        'developer': {
+            'provider': 'openai-codex',
+            'model': 'gpt-5.6-sol',
+            'base_url': 'https://chatgpt.com/backend-api/codex',
+        },
+    },
 }
 
 
 def load_config():
     if CONFIG_FILE.is_symlink() or not CONFIG_FILE.is_file():
-        raise RuntimeError('Missing config.json; run sh bots init')
+        raise RuntimeError('Missing config.json; run ./bots init')
     if CONFIG_FILE.stat().st_size > CONFIG_SIZE_LIMIT:
         raise RuntimeError('Configuration exceeds 64 KiB')
     try:
@@ -56,6 +73,27 @@ def load_config():
         raise RuntimeError('All watcher.dependencies entries must be nonempty requirement strings without whitespace or leading options')
     if len(dependencies) != len(set(dependencies)):
         raise RuntimeError('config.json contains duplicate watcher.dependencies entries')
+    models = config.get('models', {})
+    if not isinstance(models, dict):
+        raise RuntimeError('config.json models must be an object')
+    configured = set(config['watcher']['profiles']) | set(config['team']['profiles'])
+    unknown = sorted(set(models) - configured)
+    if unknown:
+        raise RuntimeError('config.json models contains unconfigured profiles: ' + ', '.join(unknown))
+    for name, settings in models.items():
+        if not isinstance(settings, dict):
+            raise RuntimeError(f'config.json models.{name} must be an object')
+        extra = sorted(set(settings) - {'provider', 'model', 'base_url'})
+        if extra:
+            raise RuntimeError(f'config.json models.{name} contains unknown keys: ' + ', '.join(extra))
+        for key in ('provider', 'model'):
+            value = settings.get(key)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise RuntimeError(f'config.json models.{name}.{key} must be a nonempty trimmed string')
+        base_url = settings.get('base_url')
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip() or
+                                     base_url != base_url.strip()):
+            raise RuntimeError(f'config.json models.{name}.base_url must be a nonempty trimmed string')
     return config
 
 

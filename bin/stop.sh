@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop the Nexs Hermes Bots watcher and Hermes Gateway on macOS.
+# Stop the Nexs Hermes Bots watcher, Hermes Gateway, and available local model services on macOS.
 # Does not remove LaunchAgent files, delete logs, or quit Hermes Desktop.
 set -u
 
@@ -82,4 +82,16 @@ fi
 if command -v hermes >/dev/null 2>&1; then
   hermes gateway status || true
 fi
+
+# Mirror init's guarded service checks. Missing runtimes, formulae, and models are
+# skipped; model-service inspection or shutdown errors never block this routine.
+echo 'Stopping available local model services...'
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [[ -f "$SCRIPT_DIR/model.py" ]]; then
+  /usr/bin/python3 "$SCRIPT_DIR/model.py" stop || \
+    echo 'WARNING: Local model service cleanup could not be completed; continuing.' >&2
+else
+  echo 'Model service cleanup skipped: helper is unavailable.'
+fi
+
 printf '\n%s\n' 'Stop routine complete. Check the service status above to verify shutdown. Logs and service configurations were preserved.'

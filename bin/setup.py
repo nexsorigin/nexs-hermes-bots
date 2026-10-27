@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize the configured team using real Hermes profiles; never start services."""
-from pathlib import Path
+"""Initialize configured profiles; never start Hermes services or install model runtimes."""
 import argparse
 import json
 import os
@@ -8,6 +7,8 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+from model import start_available_model_services
 from profiles import DEFAULT_CONFIG, configured_profiles, discover_profiles
 from sync import sync_configured_profiles
 
@@ -91,9 +92,14 @@ def main():
         os.chmod(temp, 0o600)
         temp.replace(soul)
         print(f'Imported handoff-only SOUL.md: {soul}')
+    started_model_services = start_available_model_services()
     print('Profiles initialized: ' + (', '.join(profiles) if profiles else '(none configured)'))
     print('Other Hermes profiles and their SOUL.md files were not modified.')
-    print('No services were started. Run ./bots start separately when ready.')
+    if started_model_services:
+        print('Only available local model services were started; no Hermes services or bots were started.')
+    else:
+        print('No services were started.')
+    print('Run ./bots start separately when ready.')
 
 if __name__ == '__main__':
     try:

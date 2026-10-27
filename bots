@@ -173,6 +173,8 @@ Commands:
   init       Install Hermes CLI if missing, then create/verify the profiles selected
              in config.json, their fixture folders, handoff-only SOUL.md files,
              TEAM.md, and the watcher Python environment.
+             Starts an installed local model service only when its configured model
+             already exists; never installs or downloads model software.
              Unconfigured Hermes profiles remain untouched.
              Initialization only: does NOT start the Gateway, watcher,
              LaunchAgent, or any Hermes bot.
@@ -181,7 +183,8 @@ Commands:
              Never installs a provider or downloads a model.
   start      Start Hermes Gateway and the Hermes watcher LaunchAgent.
              Starts the watcher only once and waits for gateway readiness.
-  stop       Stop the Hermes watcher and Hermes Gateway.
+  stop       Stop the Hermes watcher, Hermes Gateway, and any available configured
+             local model service using the same guarded checks as init.
              Keeps installed services and data for later use.
   cancel     Cancel active Hermes CLI tasks; remove identifiable Markdown outputs
              created during those tasks. Preserves incoming requests and old work.
@@ -204,7 +207,8 @@ Commands:
 
 Connect an LLM (required before running agent tasks):
   1. ./bots init           Install Hermes CLI and prepare profiles.
-  2. Install/start model providers and obtain models outside this project.
+  2. Install model providers and obtain models outside this project. Init may
+                            start a supported installed service when its model exists.
   3. hermes -p PROFILE model
                             Authenticate providers that require an interactive login.
   4. hermes auth list      Inspect configured authentication (where supported).
@@ -216,6 +220,7 @@ Notes:
   - LLM authentication is managed by Hermes, not by ./bots init or sync.
   - config.json model declarations contain routing settings, never credentials.
   - This project never installs model providers or downloads model files.
+  - Init skips unavailable model services without failing.
   - Some providers require API keys, subscriptions, or separate billing.
   - Configure config.json to choose which profiles receive TEAM.md
     and which synchronized profile fixture queues the watcher monitors.

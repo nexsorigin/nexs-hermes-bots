@@ -2,6 +2,8 @@
 
 A reusable, local Hermes CLI automation scaffold. **The current default team consists of Support (`support`), Developer (`developer`), and QA (`qa`) agents.** This is an example team, not a required organization: other users can change the roles, number of profiles, and handoff workflow to meet their own needs, provided they keep the folder conventions and update the corresponding role names in the code and instructions.
 
+> **Compatibility:** This setup has been tested on macOS only. Other operating systems have not been tested and may require changes to platform-specific service-management, clipboard, and installation behavior.
+
 ## Folder structure
 
 ```text
@@ -49,11 +51,11 @@ To customize the team, edit the profile lists in `config.json` and create matchi
    ./bots init
    ```
 
-   `init` checks that the watcher is stopped, installs the official Hermes CLI if missing, creates `.venv`, installs dependencies from `config.json` under `watcher.dependencies`, checks `hermes profile list`, creates profiles selected in `config.json`, and imports `profiles/<profile>/soul.md` into their actual Hermes `SOUL.md`. It does not install a model provider, download a model, or apply model routing. When replacing existing profile instructions, it makes a timestamped backup. If the upstream Hermes installer is invoked it may perform its own setup or prompts.
+   `init` checks that the watcher is stopped, installs the official Hermes CLI if missing, creates `.venv`, installs dependencies from `config.json` under `watcher.dependencies`, checks `hermes profile list`, creates profiles selected in `config.json`, and imports `profiles/<profile>/soul.md` into their actual Hermes `SOUL.md`. It does not install a model provider, download a model, or apply model routing. As a final best-effort readiness check, it may start an already-installed supported local model service only when the configured model is already present. When replacing existing profile instructions, it makes a timestamped backup. If the upstream Hermes installer is invoked it may perform its own setup or prompts.
 4. Edit `shared/TEAM.md` for shared policies, configure its recipients and watched profiles in `config.json`, and edit the three `profiles/<profile>/soul.md` templates for role-specific handoffs. Rerun `./bots init` after changing the templates to import their updated contents (backing up existing SOUL files).
 5. When ready, start services **separately** with `./bots start`. Check using `./bots status`.
 
-**`./bots init` does not explicitly start the gateway, watcher, LaunchAgent, or any bot.** The upstream Hermes installer is a third-party script and may have its own setup behavior. Profile creation and authorization may also require interaction. Manual CLI or Desktop conversations do not automatically receive the `TEAM.md` injection; it is applied by the file watcher to dispatched tasks.
+**`./bots init` does not start the Hermes Gateway, watcher, project LaunchAgent, or any bot.** It can start an available local model service under the guarded readiness rules described below. The upstream Hermes installer is a third-party script and may have its own setup behavior. Profile creation and authorization may also require interaction. Manual CLI or Desktop conversations do not automatically receive the `TEAM.md` injection; it is applied by the file watcher to dispatched tasks.
 
 `./bots start` also verifies the watcher environment and creates it if needed before starting the Gateway. This makes a fresh clone self-contained; no manual virtual-environment setup is required. On every watcher start, existing handoff Markdown files under configured watcher profile queues are scanned as recovery candidates. Files already recorded with the same path and content hash in `submission_history.jsonl` are skipped, while unseen files created during watcher downtime are dispatched. As its final step, `./bots start` runs `./bots logs` to follow the watcher and profile logs; press Ctrl+C to stop following (the services keep running).
 
@@ -101,7 +103,11 @@ The corresponding project configuration is:
 }
 ```
 
-During sync, the project registers `providers.ollama` as a named OpenAI-compatible Hermes route, using the declared `/v1` endpoint and `openai_chat` transport, before assigning QA's model to it. This avoids the interactive model picker's warning for an undefined bare `ollama` or `custom` provider. The configured QA model must already exist in that Ollama instance. Installing Ollama, starting its service, and pulling the selected model are explicit user-managed prerequisites outside this project. Change `models.qa.model` if your environment uses another installed model, then run `./bots sync`. A profile omitted from `models` retains its existing Hermes model configuration. Model entries may only target profiles listed by `watcher.profiles` or `team.profiles`.
+During sync, the project registers `providers.ollama` as a named OpenAI-compatible Hermes route, using the declared `/v1` endpoint and `openai_chat` transport, before assigning QA's model to it. This avoids the interactive model picker's warning for an undefined bare `ollama` or `custom` provider. The configured QA model must already exist in that Ollama instance. Installing Ollama and pulling the selected model are explicit user-managed prerequisites outside this project. Change `models.qa.model` if your environment uses another installed model, then run `./bots sync`. A profile omitted from `models` retains its existing Hermes model configuration. Model entries may only target profiles listed by `watcher.profiles` or `team.profiles`.
+
+During `./bots init`, the Ollama readiness check reads the local model manifest without contacting or starting Ollama. It runs `brew services start ollama` only when the `ollama` executable exists, the Homebrew formula is installed, and the configured model manifest already exists. If any prerequisite is absent—or the service cannot start—init reports the skip or warning and continues. It never runs an installer or model pull. Codex is remote and has no local service to start.
+
+`./bots stop` applies the same guarded checks in reverse. It runs `brew services stop ollama` only when Ollama, its Homebrew formula, and the configured local model are present. Missing prerequisites and shutdown failures are reported and skipped without preventing the watcher and Hermes Gateway stop routine from completing. It does not uninstall the runtime or delete any model files.
 
 1. Make sure the Hermes CLI is available:
 

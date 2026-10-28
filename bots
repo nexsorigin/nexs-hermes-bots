@@ -107,8 +107,9 @@ PYLATEST
 }
 
 console_session_name() {
-    # One named session per profile and configured provider/model, so a model
-    # change starts a new session and switching back resumes the previous one.
+    # One named session per profile, configured provider/model, and active SOUL.
+    # Model or instruction changes start a fresh system prompt; switching back
+    # resumes the corresponding prior session.
     HERMES=$1
     PROFILE=$2
     model_json=$("$HERMES" -p "$PROFILE" config get model --json) || return 1
@@ -124,7 +125,14 @@ parts = [str(model.get("provider") or "auto"), str(model.get("default") or "defa
 print(re.sub(r"[^A-Za-z0-9._-]+", "-", "-".join(parts)).strip("-"))
 ') || return 1
     [ -n "$model_slug" ] || return 1
-    printf 'nexs-hermes-bots-console-%s-%s\n' "$PROFILE" "$model_slug"
+    HERMES_BASE=${HERMES_HOME:-$HOME/.hermes}
+    SOUL_FILE="$HERMES_BASE/profiles/$PROFILE/SOUL.md"
+    soul_fingerprint='no-soul'
+    if [ -f "$SOUL_FILE" ] && [ ! -L "$SOUL_FILE" ]; then
+        soul_fingerprint=$(cksum < "$SOUL_FILE" | awk '{print $1 "-" $2}') || return 1
+    fi
+    printf 'nexs-hermes-bots-console-%s-%s-soul-%s\n' \
+        "$PROFILE" "$model_slug" "$soul_fingerprint"
 }
 
 show_latest_agent_message() {
@@ -736,10 +744,10 @@ console_repl() {
     fi
     MULTILINE_MARKER=$(printf '\036')
     SESSION_NAME=$(console_session_name "$HERMES" "$target") || {
-        echo "ERROR: Could not read the configured model for profile '$target'." >&2
+        echo "ERROR: Could not read the configured model or SOUL for profile '$target'." >&2
         return 1
     }
-    echo "Continuing session '$SESSION_NAME' for profile '$target' (new model => new session)."
+    echo "Continuing session '$SESSION_NAME' for profile '$target' (new model or SOUL => new session)."
     CURRENT_EXPORT=$(mktemp "${TMPDIR:-/tmp/}hermes-console-session.XXXXXXXX") || {
         echo 'WARNING: Could not create a temporary session export file; latest message unavailable.' >&2
         CURRENT_EXPORT=''
@@ -840,7 +848,7 @@ $message_line"
         if CURRENT_SESSION=$(console_session_name "$HERMES" "$target") && \
            [ "$CURRENT_SESSION" != "$SESSION_NAME" ]; then
             SESSION_NAME=$CURRENT_SESSION
-            echo "Configured model changed; using session '$SESSION_NAME'."
+            echo "Configured model or SOUL changed; using session '$SESSION_NAME'."
         fi
         echo "Sending to Hermes profile '$target' in session '$SESSION_NAME'..."
         # Each finite CLI turn resumes the same named Hermes conversation.

@@ -27,6 +27,19 @@ def atomic_write(path, content):
         temporary.unlink(missing_ok=True)
 
 
+def clear_model_picker_cache(profile):
+    """Remove Hermes's derived provider catalog after changing profile model routing."""
+    hermes_home = Path(os.environ.get('HERMES_HOME', str(Path.home() / '.hermes'))).expanduser()
+    cache = hermes_home / 'profiles' / profile / 'provider_models_cache.json'
+    assert_regular_path(cache)
+    if not cache.exists():
+        return
+    if not cache.is_file():
+        raise RuntimeError(f'Refusing non-file model picker cache: {cache}')
+    cache.unlink()
+    print(f'Cleared stale Hermes model picker cache: {profile}')
+
+
 def sync_configured_models(names):
     """Copy declared routing values into Hermes; never install or download models."""
     hermes = os.environ.get('HERMES_BIN') or shutil.which('hermes')
@@ -59,6 +72,7 @@ def sync_configured_models(names):
             values.append(('model.base_url', settings['base_url']))
         for key, value in values:
             subprocess.run([hermes, '-p', name, 'config', 'set', key, value], check=True)
+        clear_model_picker_cache(name)
         print(f"Synchronized model routing: {name} -> {provider} / {settings['model']}")
 
 

@@ -2,9 +2,14 @@
 """Guarded lifecycle helpers for configured local model services."""
 from pathlib import Path
 import argparse
+import json
 import os
 import shutil
 import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from profiles import load_config
 
@@ -28,6 +33,39 @@ def ollama_manifest_path(model):
         return None
     model_root = Path(os.environ.get('OLLAMA_MODELS', str(Path.home()/'.ollama/models'))).expanduser()
     return model_root/'manifests'/registry/Path(*parts)/tag
+
+
+def ollama_generate_url(base_url):
+    """Return Ollama's native generate endpoint for an OpenAI-compatible base URL."""
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        return None
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, '/api/generate', '', ''))
+
+
+def preload_ollama_model(model, base_url):
+    """Load a configured model and keep it resident until the Ollama service stops."""
+    endpoint = ollama_generate_url(base_url)
+    if endpoint is None:
+        print(f'WARNING: Could not preload Ollama model {model}: invalid base URL {base_url!r}.')
+        return False
+    body = json.dumps({'model': model, 'keep_alive': -1, 'stream': False}).encode('utf-8')
+    request = urllib.request.Request(endpoint, data=body, headers={'Content-Type': 'application/json'})
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                response.read()
+            print(f'Model loaded: Ollama ({model}); retained until the service stops.')
+            return True
+        except urllib.error.HTTPError as exc:
+            print(f'WARNING: Could not preload Ollama model {model}: HTTP {exc.code}.')
+            return False
+        except (OSError, urllib.error.URLError) as exc:
+            if time.monotonic() >= deadline:
+                print(f'WARNING: Could not preload Ollama model {model}: {exc}')
+                return False
+            time.sleep(0.5)
 
 
 def available_ollama_models():
@@ -61,13 +99,13 @@ def available_ollama_models():
             print('Model service skipped: Ollama is not installed as a Homebrew service.')
             continue
         checked.add(provider)
-        yield provider, model, brew
+        yield provider, model, settings['base_url'], brew
 
 
 def manage_available_model_services(action):
     """Start or stop only installed local runtimes with an installed configured model."""
     managed = set()
-    for provider, model, brew in available_ollama_models():
+    for provider, model, base_url, brew in available_ollama_models():
         try:
             service = subprocess.run([brew, 'services', action, 'ollama'], check=False, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -77,6 +115,8 @@ def manage_available_model_services(action):
             managed.add(provider)
             state = 'ready' if action == 'start' else 'stopped'
             print(f'Model service {state}: Ollama ({model}).')
+            if action == 'start':
+                preload_ollama_model(model, base_url)
         else:
             print(f'WARNING: Homebrew could not {action} Ollama (status {service.returncode}); continuing.')
     return managed

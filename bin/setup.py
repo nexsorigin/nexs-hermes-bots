@@ -96,7 +96,8 @@ def main():
     print('Profiles initialized: ' + (', '.join(profiles) if profiles else '(none configured)'))
     print('Other Hermes profiles and their SOUL.md files were not modified.')
     if started_model_services:
-        print('Only available local model services were started; no Hermes services or bots were started.')
+        print('Available local model services were started and their configured models were preloaded; '
+              'no Hermes services or bots were started.')
     else:
         print('No services were started.')
     print('Run ./bots start separately when ready.')

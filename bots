@@ -194,17 +194,17 @@ Commands:
   init       Install Hermes CLI if missing, then create/verify the profiles selected
              in config.json, their fixture folders, handoff-only SOUL.md files,
              TEAM.md, and the watcher Python environment.
-             Starts an installed local model service only when its configured model
-             already exists; never installs or downloads model software.
+             Starts an installed local model service and preloads its configured model
+             only when that model exists; never installs or downloads model software.
              Unconfigured Hermes profiles remain untouched.
              Initialization only: does NOT start the Gateway, watcher,
              LaunchAgent, or any Hermes bot.
   sync       Sync configured profiles with profiles/<profile>/soul.md (local wins),
              model routing from config.json, and back up changed Hermes SOUL.md.
              Never installs a provider or downloads a model.
-  start      Start available configured local model services, the Hermes Gateway,
-             and the Hermes watcher LaunchAgent. Model services use init's guarded
-             checks; the watcher starts only once and waits for gateway readiness.
+  start      Start available configured local model services, preload their models,
+             then start the Hermes Gateway and watcher LaunchAgent. Local models use
+             init's guarded checks and remain loaded until services are stopped.
   stop       Stop the Hermes watcher, Hermes Gateway, and any available configured
              local model service using the same guarded checks as init.
              Keeps installed services and data for later use.
@@ -230,7 +230,7 @@ Commands:
 Connect an LLM (required before running agent tasks):
   1. ./bots init           Install Hermes CLI and prepare profiles.
   2. Install model providers and obtain models outside this project. Init may
-                            start a supported installed service when its model exists.
+                            start its service and preload an installed model.
   3. hermes -p PROFILE model
                             Authenticate providers that require an interactive login.
   4. hermes auth list      Inspect configured authentication (where supported).

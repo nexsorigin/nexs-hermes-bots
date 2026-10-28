@@ -1,6 +1,6 @@
 #!/bin/sh
 # Manage the Hermes Gateway and File Watcher on macOS.
-# Usage: ./bots {init|start|stop|cancel|clean|status|logs|console|uninstall|help}
+# Usage: ./bots {init|start|stop|cancel|clean|status|logs|console [PROFILE]|uninstall|help}
 set -eu
 
 LABEL='local.hermes.file-watcher'
@@ -216,7 +216,9 @@ Commands:
              Requires services to be stopped and a yes/no confirmation (default: no).
   status     Show Hermes Gateway, watcher service, and process status.
   logs       Follow watcher and configured profile logs (Ctrl+C to exit).
-  console    Open a guarded console for profiles under team.profiles (no log pane).
+  console [PROFILE]
+             Open a guarded console for profiles under team.profiles (no log pane).
+             When PROFILE is supplied, select it immediately; otherwise show the list.
              Adds narrow background-click approval to those profiles, preserving
              existing allowlist entries. Shows the latest agent message after profile
              selection; automatically copies each answer to the clipboard;
@@ -638,6 +640,12 @@ console_repl() {
         echo 'ERROR: config.json team.profiles is empty; no console targets are available.' >&2
         exit 1
     fi
+    REQUESTED_PROFILE=${1:-}
+    if [ -n "$REQUESTED_PROFILE" ] && \
+       ! printf '%s\n' "$CONSOLE_PROFILES" | grep -Fqx -- "$REQUESTED_PROFILE"; then
+        echo "ERROR: Console profile '$REQUESTED_PROFILE' is not listed in config.json team.profiles." >&2
+        exit 2
+    fi
     GUARD_DIR="$WATCHER_DIR/.console-send.lock"
     mkdir -p "$WATCHER_DIR"
     HELD_LOCK=0
@@ -660,16 +668,20 @@ console_repl() {
     trap 'console_cleanup' EXIT
     trap 'exit 130' INT TERM HUP
     echo 'Hermes guarded console.'
-    echo 'Available team profiles:'
-    profile_number=1
-    for profile in $CONSOLE_PROFILES; do
-        printf '  %s) %s\n' "$profile_number" "$profile"
-        profile_number=$((profile_number + 1))
-    done
-    echo 'Select one profile by number or name. Its named session remains active for every message.'
-    echo 'At the profile prompt, type exit; or press Ctrl+C to close the console.'
+    target=$REQUESTED_PROFILE
+    if [ -n "$target" ]; then
+        echo "Selected team profile: $target"
+    else
+        echo 'Available team profiles:'
+        profile_number=1
+        for profile in $CONSOLE_PROFILES; do
+            printf '  %s) %s\n' "$profile_number" "$profile"
+            profile_number=$((profile_number + 1))
+        done
+        echo 'Select one profile by number or name. Its named session remains active for every message.'
+        echo 'At the profile prompt, type exit; or press Ctrl+C to close the console.'
+    fi
 
-    target=''
     while [ -z "$target" ]; do
         printf 'bots> '
         if ! IFS= read -r selection; then return 0; fi
@@ -952,6 +964,17 @@ case "${1:-}" in
         pgrep -fl '(^|/)watcher\.py' || true
         ;;
     console)
+        if [ -n "${3:-}" ]; then
+            echo 'ERROR: Usage: ./bots console [PROFILE]' >&2
+            exit 2
+        fi
+        REQUESTED_PROFILE=${2:-}
+        CONSOLE_PROFILES=$(configured_profiles team)
+        if [ -n "$REQUESTED_PROFILE" ] && \
+           ! printf '%s\n' "$CONSOLE_PROFILES" | grep -Fqx -- "$REQUESTED_PROFILE"; then
+            echo "ERROR: Console profile '$REQUESTED_PROFILE' is not listed in config.json team.profiles." >&2
+            exit 2
+        fi
         if ! command -v tmux >/dev/null 2>&1; then
             echo 'ERROR: tmux is not installed. Install it with: brew install tmux' >&2
             exit 1
@@ -963,10 +986,13 @@ case "${1:-}" in
         HERMES=$(hermes_bin)
         ensure_console_click_approval "$HERMES"
         SESSION='hermes-bots-guarded'
+        if [ -n "$REQUESTED_PROFILE" ]; then
+            SESSION="$SESSION-$REQUESTED_PROFILE"
+        fi
         if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
             # Start directly in the guarded REPL, without ever creating a logs pane.
             tmux new-session -d -s "$SESSION" -c "$WATCHER_DIR" -n console \
-                "sh '$CLI_SCRIPT' _console_repl"
+                "sh '$CLI_SCRIPT' _console_repl '$REQUESTED_PROFILE'"
         else
             # Old sessions may contain a left logs pane and a right guarded REPL.
             # The guarded REPL is the LAST pane in our previous two-pane layout.
@@ -1010,7 +1036,7 @@ case "${1:-}" in
         fi
         ;;
     _console_repl)
-        console_repl
+        console_repl "${2:-}"
         ;;
     logs)
         mkdir -p "$WATCHER_DIR/logs"

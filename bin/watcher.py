@@ -238,15 +238,13 @@ def process(path, live, seen, hermes):
             LOG.info('Already submitted: %s', path.name)
             return
         profile = PROFILES[path.parent.name]
-        route_prefix = match.group(1).lower()
-        if profile == 'qa' and route_prefix not in ('developer', 'support'):
+        sender = match.group(1).lower()
+        if profile == 'qa' and sender not in ('developer', 'support'):
             LOG.warning('Skipping unexpected QA sender in %s', path.name)
             return
-        # Developer completion notices retain their sender prefix. Direct QA
-        # handoffs use the recipient prefix: fixtures/support/support-<ticket>.md.
-        if profile == 'support' and route_prefix not in ('developer', 'support'):
-            LOG.warning('Skipping unexpected Support handoff filename %s; expected '
-                        'developer-<ticket>.md or support-<ticket>.md', path.name)
+        if profile == 'support' and sender not in ('developer', 'qa'):
+            LOG.warning('Skipping unexpected Support sender in %s; expected '
+                        'developer-<ticket>.md or qa-<ticket>.md', path.name)
             return
         ticket = match.group(2)
         LOG.info('%s: %s => profile=%s ticket=%s', 'LIVE' if live else 'DRY RUN', path, profile, ticket)

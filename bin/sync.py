@@ -47,6 +47,7 @@ def sync_configured_models(names):
                 ('providers.ollama.name', 'Ollama'),
                 ('providers.ollama.base_url', settings['base_url']),
                 ('providers.ollama.transport', 'openai_chat'),
+                ('providers.ollama.default_model', settings['model']),
             ]
             for key, value in provider_values:
                 subprocess.run([hermes, '-p', name, 'config', 'set', key, value], check=True)

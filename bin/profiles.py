@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
         },
         'qa': {
             'provider': 'ollama',
-            'model': 'qwen3.5:9b',
+            'model': 'qwen3.5:4b',
             'base_url': 'http://localhost:11434/v1',
         },
         'developer': {

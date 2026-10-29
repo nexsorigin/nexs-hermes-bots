@@ -239,12 +239,16 @@ def process(path, live, seen, hermes):
             return
         profile = PROFILES[path.parent.name]
         sender = match.group(1).lower()
-        if profile == 'qa' and sender not in ('developer', 'support'):
-            LOG.warning('Skipping unexpected QA sender in %s', path.name)
+        # Routes: support->developer, developer->qa, qa->developer, developer->support.
+        if profile == 'qa' and sender != 'developer':
+            LOG.warning('Skipping unexpected QA sender in %s; expected developer-<ticket>.md', path.name)
             return
-        if profile == 'support' and sender not in ('developer', 'qa'):
-            LOG.warning('Skipping unexpected Support sender in %s; expected '
-                        'developer-<ticket>.md or qa-<ticket>.md', path.name)
+        if profile == 'developer' and sender not in ('support', 'qa'):
+            LOG.warning('Skipping unexpected Developer sender in %s; expected support-<ticket>.md '
+                        'or qa-<ticket>.md', path.name)
+            return
+        if profile == 'support' and sender != 'developer':
+            LOG.warning('Skipping unexpected Support sender in %s; expected developer-<ticket>.md', path.name)
             return
         ticket = match.group(2)
         LOG.info('%s: %s => profile=%s ticket=%s', 'LIVE' if live else 'DRY RUN', path, profile, ticket)

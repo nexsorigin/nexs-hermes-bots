@@ -66,7 +66,34 @@ unload_and_remove_plist() {
 # Remove the project watcher first so it cannot restart while Hermes is removed.
 unload_and_remove_plist "$WATCHER_PLIST"
 
-if [[ -n "$HERMES_BIN" && -x "$HERMES_BIN" ]]; then
+# A shim that points at a deleted agent (an earlier partial uninstall) cannot run
+# the official uninstaller; clean up only the Hermes-owned leftovers instead.
+BROKEN_INSTALL=0
+if [[ -n "$HERMES_BIN" ]] && ! "$HERMES_BIN" --version >/dev/null 2>&1 && \
+   [[ ! -e "$HOME/.hermes/hermes-agent" ]]; then
+  BROKEN_INSTALL=1
+fi
+
+if (( BROKEN_INSTALL )); then
+  echo 'Hermes CLI is broken and its agent files are already gone; removing leftovers directly.'
+  if pgrep -f "$HOME/.hermes/" >/dev/null 2>&1; then
+    echo 'Stopping leftover Hermes processes...'
+    pkill -TERM -f "$HOME/.hermes/" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -f "$HOME/.hermes/" 2>/dev/null || true
+  fi
+  shim="$HOME/.local/bin/hermes"
+  if [[ -L "$shim" || -f "$shim" ]] && \
+     { [[ -L "$shim" ]] && [[ "$(readlink "$shim")" == *"/.hermes/"* ]] || \
+       grep -q '/\.hermes/' "$shim" 2>/dev/null; }; then
+    rm -f -- "$shim"
+    echo "Removed stale Hermes launcher: $shim"
+  fi
+  if [[ -d "$HOME/.hermes" && ! -L "$HOME/.hermes" ]]; then
+    rm -rf -- "$HOME/.hermes"
+    echo 'Removed leftover Hermes data: ~/.hermes'
+  fi
+elif [[ -n "$HERMES_BIN" && -x "$HERMES_BIN" ]]; then
   echo 'Running the official Hermes full uninstall...'
   "$HERMES_BIN" uninstall --full --yes
 elif [[ ! -e "$HOME/.hermes" && ! -e "$HOME/.local/bin/hermes" && \
